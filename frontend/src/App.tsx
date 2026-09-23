@@ -115,13 +115,7 @@ type FinanceSummary = {
   profit_per_animal: number | null
 }
 
-type Tab =
-  | 'dashboard'
-  | 'animals'
-  | 'groups'
-  | 'group-vacc'
-  | 'calendar'
-  | 'finance'
+type Tab = 'dashboard' | 'animals' | 'groups' | 'vaccination' | 'finance'
 
 // ============ УТИЛИТЫ ============
 function formatDate(iso: string | null | undefined): string {
@@ -192,18 +186,8 @@ const INCOME_CATEGORIES: Record<
   string,
   { label: string; icon: string; linksAnimal: boolean; autoStatus?: string }
 > = {
-  meat: {
-    label: 'Мясо',
-    icon: '🥩',
-    linksAnimal: true,
-    autoStatus: 'Забой',
-  },
-  livestock: {
-    label: 'Скот',
-    icon: '🐄',
-    linksAnimal: true,
-    autoStatus: 'Продажа',
-  },
+  meat: { label: 'Мясо', icon: '🥩', linksAnimal: true, autoStatus: 'Забой' },
+  livestock: { label: 'Скот', icon: '🐄', linksAnimal: true, autoStatus: 'Продажа' },
   milk: { label: 'Молоко', icon: '🥛', linksAnimal: true },
   byproducts: { label: 'Субпродукты', icon: '🍖', linksAnimal: false },
   subsidy: { label: 'Субсидии', icon: '🏛', linksAnimal: false },
@@ -214,8 +198,7 @@ const PAGE_TITLES: Record<Tab, string> = {
   dashboard: 'Сводка',
   animals: 'Поголовье',
   groups: 'Группы',
-  'group-vacc': 'Гуртовая вакцинация',
-  calendar: 'Календарь вакцинаций',
+  vaccination: 'Вакцинация',
   finance: 'Финансы',
 }
 
@@ -239,10 +222,7 @@ function parseApiError(err: any): {
     }
   }
   if (data?.errors && typeof data.errors === 'object') {
-    return {
-      general: data.detail || 'Проверьте поля формы',
-      fields: data.errors,
-    }
+    return { general: data.detail || 'Проверьте поля формы', fields: data.errors }
   }
   if (typeof data?.detail === 'string') {
     return { general: data.detail, fields: {} }
@@ -359,19 +339,11 @@ function App() {
           </button>
 
           <button
-            className={`drawer-item ${tab === 'group-vacc' ? 'active' : ''}`}
-            onClick={() => goTo('group-vacc')}
+            className={`drawer-item ${tab === 'vaccination' ? 'active' : ''}`}
+            onClick={() => goTo('vaccination')}
           >
             <span className="drawer-item-icon">💉</span>
-            <span className="drawer-item-text">Гуртовая вакцинация</span>
-          </button>
-
-          <button
-            className={`drawer-item ${tab === 'calendar' ? 'active' : ''}`}
-            onClick={() => goTo('calendar')}
-          >
-            <span className="drawer-item-icon">📅</span>
-            <span className="drawer-item-text">Календарь</span>
+            <span className="drawer-item-text">Вакцинация</span>
             {overdueCount > 0 ? (
               <span className="drawer-item-badge">{overdueCount}</span>
             ) : (
@@ -443,16 +415,10 @@ function App() {
           />
         )}
 
-        {tab === 'group-vacc' && (
-          <GroupVaccinationTab
+        {tab === 'vaccination' && (
+          <VaccinationTab
             groups={groups}
             animals={animals}
-            onReload={loadAll}
-          />
-        )}
-
-        {tab === 'calendar' && (
-          <CalendarTab
             vaccinations={vaccinations}
             animalsById={animalsById}
             vaccinesById={vaccinesById}
@@ -488,6 +454,66 @@ function App() {
           animals={animals}
           onClose={() => setMembershipGroupId(null)}
           onChanged={loadAll}
+        />
+      )}
+    </div>
+  )
+}
+
+// ============ ВКЛАДКА: ВАКЦИНАЦИЯ (обёртка) ============
+function VaccinationTab({
+  groups,
+  animals,
+  vaccinations,
+  animalsById,
+  vaccinesById,
+  onReload,
+}: {
+  groups: Group[]
+  animals: Animal[]
+  vaccinations: Vaccination[]
+  animalsById: Record<number, Animal>
+  vaccinesById: Record<number, Vaccine>
+  onReload: () => void
+}) {
+  const [subTab, setSubTab] = useState<'calendar' | 'group'>('calendar')
+
+  const pendingCount = vaccinations.filter((v) => !v.is_done).length
+
+  return (
+    <div>
+      <div className="subtabs">
+        <button
+          className={subTab === 'calendar' ? 'active' : ''}
+          onClick={() => setSubTab('calendar')}
+        >
+          📅 Календарь
+          {pendingCount > 0 && (
+            <span className="subtab-count">{pendingCount}</span>
+          )}
+        </button>
+        <button
+          className={subTab === 'group' ? 'active' : ''}
+          onClick={() => setSubTab('group')}
+        >
+          👥 Гуртовая
+        </button>
+      </div>
+
+      {subTab === 'calendar' && (
+        <CalendarTab
+          vaccinations={vaccinations}
+          animalsById={animalsById}
+          vaccinesById={vaccinesById}
+          onReload={onReload}
+        />
+      )}
+
+      {subTab === 'group' && (
+        <GroupVaccinationTab
+          groups={groups}
+          animals={animals}
+          onReload={onReload}
         />
       )}
     </div>
@@ -650,7 +676,9 @@ function FinanceTab({
               <div className="fin-stat-value">
                 {formatMoney(summary.total_expense)}
               </div>
-              <div className="fin-stat-sub">{summary.expense_count} записей</div>
+              <div className="fin-stat-sub">
+                {summary.expense_count} записей
+              </div>
             </div>
             <div
               className={`fin-stat profit ${
@@ -924,9 +952,7 @@ function FinanceTab({
                 label: i.category,
                 icon: '📌',
               }
-              const animal = i.animal_id
-                ? animalsById[i.animal_id]
-                : null
+              const animal = i.animal_id ? animalsById[i.animal_id] : null
               return (
                 <div key={i.id} className="card fin-card">
                   <div className="fin-row">
@@ -1153,7 +1179,6 @@ function IncomeForm({
   const cat = INCOME_CATEGORIES[form.category] || INCOME_CATEGORIES.other
   const linksAnimal = cat.linksAnimal
 
-  // Только активные животные для выбора
   const availableAnimals = useMemo(() => {
     let list = animals.filter((a) => a.status === 'active')
     if (animalSearch.trim()) {
@@ -1180,8 +1205,10 @@ function IncomeForm({
     if (!form.amount || Number(form.amount) <= 0) {
       errs.amount = 'Укажите сумму больше нуля'
     }
-    // Для мяса и скота животное обязательно
-    if ((form.category === 'meat' || form.category === 'livestock') && !form.animal_id) {
+    if (
+      (form.category === 'meat' || form.category === 'livestock') &&
+      !form.animal_id
+    ) {
       errs.animal_id = 'Укажите животное'
     }
     if (Object.keys(errs).length > 0) {
@@ -1261,7 +1288,6 @@ function IncomeForm({
         </div>
       </div>
 
-      {/* Ссылка на животное для соответствующих категорий */}
       {linksAnimal && (
         <div className="form-field">
           <label>
@@ -1394,8 +1420,8 @@ function IncomeForm({
       {(form.category === 'meat' || form.category === 'livestock') && (
         <div className="auto-status-warning">
           ⚠️ При сохранении животное автоматически станет{' '}
-          <b>{form.category === 'meat' ? 'Забито' : 'Продано'}</b>{' '}
-          и появится событие в его карточке.
+          <b>{form.category === 'meat' ? 'Забито' : 'Продано'}</b> и появится
+          событие в его карточке.
         </div>
       )}
 
