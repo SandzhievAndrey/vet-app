@@ -8,7 +8,7 @@ class AnimalBase(BaseModel):
     tag_number: str
     chip_number: Optional[str] = None
     name: Optional[str] = None
-    sex: str  # "male" | "female"
+    sex: str
     birth_date: Optional[date] = None
     breed: Optional[str] = "Калмыцкая"
     color: Optional[str] = None
@@ -49,6 +49,9 @@ class GroupBase(BaseModel):
 class GroupCreate(GroupBase):
     pass
 
+class GroupUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
 
 class GroupResponse(GroupBase):
     id: int
@@ -83,6 +86,7 @@ class VaccinationBase(BaseModel):
     animal_id: int
     vaccine_id: int
     planned_date: date
+    recommended_date: Optional[date] = None
     notes: Optional[str] = None
 
 
@@ -126,3 +130,15 @@ class EventResponse(EventBase):
 
     class Config:
         from_attributes = True
+
+# === Гуртовая вакцинация ===
+class GroupCompleteRequest(BaseModel):
+    disease: str
+    actual_date: date
+    vet_name: Optional[str] = None
+    dose_used: Optional[str] = None
+
+# === Управление составом гурта ===
+class GroupAssignRequest(BaseModel):
+    animal_ids: list[int]
+    action: str  # "add" | "remove"

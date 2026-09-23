@@ -4,6 +4,7 @@
 - Ветеринарных правилах РФ
 - Региональных планах Управления ветеринарии РК
 - Наставлениях по применению вакцин
+- Научных публикациях (диссертации, статьи)
 """
 
 from datetime import date, timedelta
@@ -26,7 +27,7 @@ VACCINATION_SCHEMES = {
         ],
     },
     "Бруцеллёз": {
-        "vaccine": "Вакцина против бруцеллёза",
+        "vaccine": "Вакцина против бруцеллёза (штамм B.abortus 82)",
         "schedules": [
             {"age_days": 120, "repeat_after_days": 300, "annual": True},
         ],
@@ -38,33 +39,39 @@ VACCINATION_SCHEMES = {
         ],
     },
     "Нодулярный дерматит": {
-        "vaccine": "Вакцина против нодулярного дерматита",
+        "vaccine": "Вирусвакцина против нодулярного дерматита",
         "schedules": [
             {"age_days": 90, "repeat_after_days": 180, "annual": True},
         ],
     },
-    "ИРТ, ВД, ПГ-3": {
-        "vaccine": "Комбинированная вакцина ИРТ+ВД+ПГ-3",
+    "Эмфизематозный карбункул (Эмкар)": {
+        "vaccine": "Ассоциированная вакцина против сибирской язвы и эмкара",
         "schedules": [
-            {"age_days": 20, "repeat_after_days": 0, "annual": True},
+            {"age_days": 90, "repeat_after_days": 180, "annual": True},
+        ],
+    },
+    "ИРТ, ВД, ПГ-3, РСИ": {
+        "vaccine": "Комбовак-Р / Бови-Шилд Голд FP5 L5",
+        "schedules": [
+            {"age_days": 7, "repeat_after_days": 28, "annual": True},
         ],
     },
     "Клостридиозы": {
-        "vaccine": "Коглавакс (клостридиозы)",
+        "vaccine": "Коглавакс",
         "schedules": [
-            {"age_days": 60, "repeat_after_days": 30, "annual": True},
+            {"age_days": 30, "repeat_after_days": 28, "annual": True},
         ],
     },
     "Пастереллёз": {
         "vaccine": "Вакцина против пастереллёза",
         "schedules": [
-            {"age_days": 45, "repeat_after_days": 21, "annual": True},
+            {"age_days": 45, "repeat_after_days": 180, "annual": True},
         ],
     },
     "Лептоспироз": {
         "vaccine": "Вакцина против лептоспироза",
         "schedules": [
-            {"age_days": 30, "repeat_after_days": 180, "annual": True},
+            {"age_days": 30, "repeat_after_days": 21, "annual": True},
         ],
     },
     "Туберкулёз (диагностика)": {
