@@ -73,7 +73,55 @@ type GroupUpcoming = {
   overdue_count: number
 }
 
-type Tab = 'dashboard' | 'animals' | 'groups' | 'group-vacc' | 'calendar'
+type Expense = {
+  id: number
+  category: string
+  amount: number
+  expense_date: string
+  description: string | null
+  quantity: string | null
+  group_id: number | null
+  animal_id: number | null
+  created_at: string
+}
+
+type Income = {
+  id: number
+  category: string
+  amount: number
+  income_date: string
+  description: string | null
+  weight_kg: number | null
+  animal_id: number | null
+  created_at: string
+}
+
+type FinanceSummary = {
+  period: { from: string | null; to: string | null }
+  total_expense: number
+  total_income: number
+  profit: number
+  expense_count: number
+  income_count: number
+  expense_by_category: Record<string, { amount: number; count: number }>
+  income_by_category: Record<string, { amount: number; count: number }>
+  meat: {
+    total_weight_kg: number
+    total_income: number
+    avg_price_per_kg: number | null
+    cost_per_kg: number | null
+  }
+  active_animals: number
+  profit_per_animal: number | null
+}
+
+type Tab =
+  | 'dashboard'
+  | 'animals'
+  | 'groups'
+  | 'group-vacc'
+  | 'calendar'
+  | 'finance'
 
 // ============ УТИЛИТЫ ============
 function formatDate(iso: string | null | undefined): string {
@@ -84,6 +132,11 @@ function formatDate(iso: string | null | undefined): string {
     month: 'short',
     year: 'numeric',
   })
+}
+
+function formatMoney(n: number | null | undefined): string {
+  if (n === null || n === undefined) return '—'
+  return n.toLocaleString('ru-RU', { maximumFractionDigits: 2 }) + ' ₽'
 }
 
 function daysUntil(iso: string): number {
@@ -124,12 +177,46 @@ const STATUS_LABELS: Record<string, string> = {
   slaughtered: 'Забит',
 }
 
+const EXPENSE_CATEGORIES: Record<string, { label: string; icon: string }> = {
+  feed: { label: 'Корм', icon: '🌾' },
+  salary: { label: 'Зарплата', icon: '💰' },
+  vet: { label: 'Ветеринария', icon: '💉' },
+  fuel: { label: 'Бензин / ГСМ', icon: '⛽' },
+  utilities: { label: 'Содержание', icon: '🏠' },
+  equipment: { label: 'Оборудование', icon: '🔧' },
+  taxes: { label: 'Налоги', icon: '📋' },
+  other: { label: 'Прочее', icon: '📌' },
+}
+
+const INCOME_CATEGORIES: Record<
+  string,
+  { label: string; icon: string; linksAnimal: boolean; autoStatus?: string }
+> = {
+  meat: {
+    label: 'Мясо',
+    icon: '🥩',
+    linksAnimal: true,
+    autoStatus: 'Забой',
+  },
+  livestock: {
+    label: 'Скот',
+    icon: '🐄',
+    linksAnimal: true,
+    autoStatus: 'Продажа',
+  },
+  milk: { label: 'Молоко', icon: '🥛', linksAnimal: true },
+  byproducts: { label: 'Субпродукты', icon: '🍖', linksAnimal: false },
+  subsidy: { label: 'Субсидии', icon: '🏛', linksAnimal: false },
+  other: { label: 'Прочее', icon: '📌', linksAnimal: false },
+}
+
 const PAGE_TITLES: Record<Tab, string> = {
   dashboard: 'Сводка',
   animals: 'Поголовье',
   groups: 'Группы',
   'group-vacc': 'Гуртовая вакцинация',
   calendar: 'Календарь вакцинаций',
+  finance: 'Финансы',
 }
 
 function parseApiError(err: any): {
@@ -291,6 +378,14 @@ function App() {
               <span className="drawer-item-count">{pendingCount}</span>
             )}
           </button>
+
+          <button
+            className={`drawer-item ${tab === 'finance' ? 'active' : ''}`}
+            onClick={() => goTo('finance')}
+          >
+            <span className="drawer-item-icon">💰</span>
+            <span className="drawer-item-text">Финансы</span>
+          </button>
         </nav>
 
         <div className="drawer-footer">
@@ -364,6 +459,10 @@ function App() {
             onReload={loadAll}
           />
         )}
+
+        {tab === 'finance' && (
+          <FinanceTab groups={groups} animals={animals} onReloadAll={loadAll} />
+        )}
       </main>
 
       {selectedAnimal && (
@@ -395,6 +494,918 @@ function App() {
   )
 }
 
+// ============ ФИНАНСЫ ============
+function FinanceTab({
+  groups,
+  animals,
+  onReloadAll,
+}: {
+  groups: Group[]
+  animals: Animal[]
+  onReloadAll: () => void
+}) {
+  const [summary, setSummary] = useState<FinanceSummary | null>(null)
+  const [expenses, setExpenses] = useState<Expense[]>([])
+  const [incomes, setIncomes] = useState<Income[]>([])
+
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [view, setView] = useState<'summary' | 'expenses' | 'incomes'>('summary')
+
+  const [showExpenseForm, setShowExpenseForm] = useState(false)
+  const [showIncomeForm, setShowIncomeForm] = useState(false)
+
+  const animalsById = useMemo(() => {
+    const m: Record<number, Animal> = {}
+    animals.forEach((a) => (m[a.id] = a))
+    return m
+  }, [animals])
+
+  const loadFinance = useCallback(async () => {
+    try {
+      const params: any = {}
+      if (dateFrom) params.date_from = dateFrom
+      if (dateTo) params.date_to = dateTo
+
+      const [s, e, i] = await Promise.all([
+        axios.get<FinanceSummary>(`${API}/finance/summary`, { params }),
+        axios.get<Expense[]>(`${API}/expenses`, { params }),
+        axios.get<Income[]>(`${API}/incomes`, { params }),
+      ])
+      setSummary(s.data)
+      setExpenses(e.data)
+      setIncomes(i.data)
+    } catch (err) {
+      console.error(err)
+    }
+  }, [dateFrom, dateTo])
+
+  useEffect(() => {
+    loadFinance()
+  }, [loadFinance])
+
+  const quickRange = (days: number) => {
+    const to = new Date()
+    const from = new Date()
+    from.setDate(from.getDate() - days)
+    setDateFrom(from.toISOString().slice(0, 10))
+    setDateTo(to.toISOString().slice(0, 10))
+  }
+
+  const clearRange = () => {
+    setDateFrom('')
+    setDateTo('')
+  }
+
+  const deleteExpense = async (id: number) => {
+    if (!confirm('Удалить расход?')) return
+    try {
+      await axios.delete(`${API}/expenses/${id}`)
+      loadFinance()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const deleteIncome = async (id: number) => {
+    if (!confirm('Удалить доход?')) return
+    try {
+      await axios.delete(`${API}/incomes/${id}`)
+      loadFinance()
+      onReloadAll()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  return (
+    <div>
+      <div className="fin-filters">
+        <div className="fin-dates">
+          <input
+            type="date"
+            className="date-input"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+          />
+          <span className="fin-date-sep">—</span>
+          <input
+            type="date"
+            className="date-input"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+          />
+        </div>
+        <div className="fin-quick">
+          <button className="chip" onClick={() => quickRange(30)}>
+            30 дней
+          </button>
+          <button className="chip" onClick={() => quickRange(90)}>
+            90 дней
+          </button>
+          <button className="chip" onClick={() => quickRange(365)}>
+            Год
+          </button>
+          {(dateFrom || dateTo) && (
+            <button className="chip" onClick={clearRange}>
+              ✕ Сброс
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="filter-row">
+        <button
+          className={view === 'summary' ? 'chip active' : 'chip'}
+          onClick={() => setView('summary')}
+        >
+          📊 Сводка
+        </button>
+        <button
+          className={view === 'expenses' ? 'chip active' : 'chip'}
+          onClick={() => setView('expenses')}
+        >
+          📉 Расходы ({expenses.length})
+        </button>
+        <button
+          className={view === 'incomes' ? 'chip active' : 'chip'}
+          onClick={() => setView('incomes')}
+        >
+          📈 Доходы ({incomes.length})
+        </button>
+      </div>
+
+      {view === 'summary' && summary && (
+        <>
+          <div className="fin-stats">
+            <div className="fin-stat income">
+              <div className="fin-stat-label">Доходы</div>
+              <div className="fin-stat-value">
+                {formatMoney(summary.total_income)}
+              </div>
+              <div className="fin-stat-sub">{summary.income_count} записей</div>
+            </div>
+            <div className="fin-stat expense">
+              <div className="fin-stat-label">Расходы</div>
+              <div className="fin-stat-value">
+                {formatMoney(summary.total_expense)}
+              </div>
+              <div className="fin-stat-sub">{summary.expense_count} записей</div>
+            </div>
+            <div
+              className={`fin-stat profit ${
+                summary.profit >= 0 ? 'positive' : 'negative'
+              }`}
+            >
+              <div className="fin-stat-label">Прибыль</div>
+              <div className="fin-stat-value">
+                {formatMoney(summary.profit)}
+              </div>
+              <div className="fin-stat-sub">
+                {summary.active_animals} голов
+              </div>
+            </div>
+          </div>
+
+          {summary.meat.total_weight_kg > 0 && (
+            <div className="fin-meat-block">
+              <h3 className="section-title">🥩 Продажа мяса</h3>
+              <div className="fin-meat-grid">
+                <div className="fin-meat-item">
+                  <span className="fin-meat-label">Продано</span>
+                  <span className="fin-meat-value">
+                    {summary.meat.total_weight_kg.toLocaleString('ru-RU')} кг
+                  </span>
+                </div>
+                <div className="fin-meat-item">
+                  <span className="fin-meat-label">Выручка</span>
+                  <span className="fin-meat-value">
+                    {formatMoney(summary.meat.total_income)}
+                  </span>
+                </div>
+                {summary.meat.avg_price_per_kg !== null && (
+                  <div className="fin-meat-item">
+                    <span className="fin-meat-label">Средняя цена</span>
+                    <span className="fin-meat-value">
+                      {formatMoney(summary.meat.avg_price_per_kg)}/кг
+                    </span>
+                  </div>
+                )}
+                {summary.meat.cost_per_kg !== null && (
+                  <div className="fin-meat-item">
+                    <span className="fin-meat-label">Себестоимость</span>
+                    <span className="fin-meat-value">
+                      {formatMoney(summary.meat.cost_per_kg)}/кг
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {summary.meat.cost_per_kg !== null &&
+                summary.meat.avg_price_per_kg !== null && (
+                  <div
+                    className={`fin-meat-margin ${
+                      summary.meat.avg_price_per_kg - summary.meat.cost_per_kg >
+                      0
+                        ? 'positive'
+                        : 'negative'
+                    }`}
+                  >
+                    Маржа с 1 кг:{' '}
+                    <b>
+                      {formatMoney(
+                        summary.meat.avg_price_per_kg -
+                          summary.meat.cost_per_kg
+                      )}
+                    </b>{' '}
+                    (
+                    {(
+                      ((summary.meat.avg_price_per_kg -
+                        summary.meat.cost_per_kg) /
+                        summary.meat.avg_price_per_kg) *
+                      100
+                    ).toFixed(1)}
+                    %)
+                  </div>
+                )}
+            </div>
+          )}
+
+          {summary.profit_per_animal !== null && (
+            <div className="fin-per-animal">
+              💡 Прибыль на 1 голову:{' '}
+              <b>{formatMoney(summary.profit_per_animal)}</b>
+            </div>
+          )}
+
+          {Object.keys(summary.expense_by_category).length > 0 && (
+            <>
+              <h3 className="section-title">📉 Расходы по категориям</h3>
+              <div className="fin-cats">
+                {Object.entries(summary.expense_by_category)
+                  .sort((a, b) => b[1].amount - a[1].amount)
+                  .map(([key, data]) => {
+                    const cat = EXPENSE_CATEGORIES[key] || {
+                      label: key,
+                      icon: '📌',
+                    }
+                    const percent = summary.total_expense
+                      ? (data.amount / summary.total_expense) * 100
+                      : 0
+                    return (
+                      <div key={key} className="fin-cat">
+                        <div className="fin-cat-head">
+                          <span className="fin-cat-icon">{cat.icon}</span>
+                          <span className="fin-cat-name">{cat.label}</span>
+                          <span className="fin-cat-amount">
+                            {formatMoney(data.amount)}
+                          </span>
+                        </div>
+                        <div className="fin-cat-bar">
+                          <div
+                            className="fin-cat-bar-fill expense"
+                            style={{ width: `${percent}%` }}
+                          />
+                        </div>
+                        <div className="fin-cat-percent">
+                          {percent.toFixed(1)}% · {data.count} записей
+                        </div>
+                      </div>
+                    )
+                  })}
+              </div>
+            </>
+          )}
+
+          {Object.keys(summary.income_by_category).length > 0 && (
+            <>
+              <h3 className="section-title">📈 Доходы по категориям</h3>
+              <div className="fin-cats">
+                {Object.entries(summary.income_by_category)
+                  .sort((a, b) => b[1].amount - a[1].amount)
+                  .map(([key, data]) => {
+                    const cat = INCOME_CATEGORIES[key] || {
+                      label: key,
+                      icon: '📌',
+                    }
+                    const percent = summary.total_income
+                      ? (data.amount / summary.total_income) * 100
+                      : 0
+                    return (
+                      <div key={key} className="fin-cat">
+                        <div className="fin-cat-head">
+                          <span className="fin-cat-icon">{cat.icon}</span>
+                          <span className="fin-cat-name">{cat.label}</span>
+                          <span className="fin-cat-amount">
+                            {formatMoney(data.amount)}
+                          </span>
+                        </div>
+                        <div className="fin-cat-bar">
+                          <div
+                            className="fin-cat-bar-fill income"
+                            style={{ width: `${percent}%` }}
+                          />
+                        </div>
+                        <div className="fin-cat-percent">
+                          {percent.toFixed(1)}% · {data.count} записей
+                        </div>
+                      </div>
+                    )
+                  })}
+              </div>
+            </>
+          )}
+
+          {summary.expense_count === 0 && summary.income_count === 0 && (
+            <p className="empty">
+              Пока нет данных. Добавьте расходы и доходы во вкладках ниже.
+            </p>
+          )}
+        </>
+      )}
+
+      {view === 'expenses' && (
+        <>
+          <div className="toolbar">
+            <button
+              className="add-btn"
+              onClick={() => setShowExpenseForm(!showExpenseForm)}
+            >
+              {showExpenseForm ? '✕ Отмена' : '+ Добавить расход'}
+            </button>
+          </div>
+
+          {showExpenseForm && (
+            <ExpenseForm
+              groups={groups}
+              onCreated={() => {
+                setShowExpenseForm(false)
+                loadFinance()
+              }}
+            />
+          )}
+
+          {expenses.length === 0 && !showExpenseForm && (
+            <p className="empty">Расходов пока нет</p>
+          )}
+
+          <div className="list">
+            {expenses.map((e) => {
+              const cat = EXPENSE_CATEGORIES[e.category] || {
+                label: e.category,
+                icon: '📌',
+              }
+              const group = e.group_id
+                ? groups.find((g) => g.id === e.group_id)
+                : null
+              return (
+                <div key={e.id} className="card fin-card">
+                  <div className="fin-row">
+                    <div className="fin-row-icon expense">{cat.icon}</div>
+                    <div className="fin-row-info">
+                      <div className="fin-row-title">
+                        {cat.label}
+                        {e.quantity && (
+                          <span className="fin-row-qty"> · {e.quantity}</span>
+                        )}
+                      </div>
+                      <div className="fin-row-meta">
+                        <span>📅 {formatDate(e.expense_date)}</span>
+                        {group && <span>👥 {group.name}</span>}
+                        {e.description && <span>· {e.description}</span>}
+                      </div>
+                    </div>
+                    <div className="fin-row-amount expense">
+                      −{formatMoney(e.amount)}
+                    </div>
+                    <button
+                      className="icon-btn danger small"
+                      onClick={() => deleteExpense(e.id)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
+
+      {view === 'incomes' && (
+        <>
+          <div className="toolbar">
+            <button
+              className="add-btn"
+              onClick={() => setShowIncomeForm(!showIncomeForm)}
+            >
+              {showIncomeForm ? '✕ Отмена' : '+ Добавить доход'}
+            </button>
+          </div>
+
+          {showIncomeForm && (
+            <IncomeForm
+              animals={animals}
+              onCreated={() => {
+                setShowIncomeForm(false)
+                loadFinance()
+                onReloadAll()
+              }}
+            />
+          )}
+
+          {incomes.length === 0 && !showIncomeForm && (
+            <p className="empty">Доходов пока нет</p>
+          )}
+
+          <div className="list">
+            {incomes.map((i) => {
+              const cat = INCOME_CATEGORIES[i.category] || {
+                label: i.category,
+                icon: '📌',
+              }
+              const animal = i.animal_id
+                ? animalsById[i.animal_id]
+                : null
+              return (
+                <div key={i.id} className="card fin-card">
+                  <div className="fin-row">
+                    <div className="fin-row-icon income">{cat.icon}</div>
+                    <div className="fin-row-info">
+                      <div className="fin-row-title">
+                        {cat.label}
+                        {i.weight_kg && (
+                          <span className="fin-row-qty">
+                            {' '}
+                            · {i.weight_kg} кг
+                          </span>
+                        )}
+                      </div>
+                      <div className="fin-row-meta">
+                        <span>📅 {formatDate(i.income_date)}</span>
+                        {animal && (
+                          <span className="fin-animal-link">
+                            🐄 {animal.tag_number}
+                            {animal.name && ` (${animal.name})`}
+                          </span>
+                        )}
+                        {i.description && <span>· {i.description}</span>}
+                      </div>
+                    </div>
+                    <div className="fin-row-amount income">
+                      +{formatMoney(i.amount)}
+                    </div>
+                    <button
+                      className="icon-btn danger small"
+                      onClick={() => deleteIncome(i.id)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ============ ФОРМА РАСХОДА ============
+function ExpenseForm({
+  groups,
+  onCreated,
+}: {
+  groups: Group[]
+  onCreated: () => void
+}) {
+  const [form, setForm] = useState({
+    category: 'feed',
+    amount: '',
+    expense_date: new Date().toISOString().slice(0, 10),
+    description: '',
+    quantity: '',
+    group_id: '',
+  })
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [generalError, setGeneralError] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setFieldErrors({})
+    setGeneralError('')
+
+    if (!form.amount || Number(form.amount) <= 0) {
+      setFieldErrors({ amount: 'Укажите сумму больше нуля' })
+      setGeneralError('Исправьте выделенные поля')
+      return
+    }
+
+    setSaving(true)
+    try {
+      await axios.post(`${API}/expenses`, {
+        category: form.category,
+        amount: Number(form.amount),
+        expense_date: form.expense_date,
+        description: form.description.trim() || null,
+        quantity: form.quantity.trim() || null,
+        group_id: form.group_id ? Number(form.group_id) : null,
+      })
+      onCreated()
+    } catch (err) {
+      const p = parseApiError(err)
+      setFieldErrors(p.fields)
+      setGeneralError(p.general)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form className="form-card" onSubmit={submit} noValidate>
+      <h3>Новый расход</h3>
+
+      {generalError && (
+        <div className="form-error">
+          <span className="error-icon">⚠️</span>
+          <span>{generalError}</span>
+        </div>
+      )}
+
+      <div className="form-row">
+        <div className="form-field">
+          <label>
+            Категория <span className="req">*</span>
+          </label>
+          <select
+            value={form.category}
+            onChange={(e) => setForm({ ...form, category: e.target.value })}
+          >
+            {Object.entries(EXPENSE_CATEGORIES).map(([k, v]) => (
+              <option key={k} value={k}>
+                {v.icon} {v.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="form-field">
+          <label>
+            Сумма, ₽ <span className="req">*</span>
+          </label>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            className={fieldErrors.amount ? 'has-error' : ''}
+            value={form.amount}
+            onChange={(e) => setForm({ ...form, amount: e.target.value })}
+            placeholder="15000"
+          />
+          {fieldErrors.amount && (
+            <div className="field-error">{fieldErrors.amount}</div>
+          )}
+        </div>
+      </div>
+
+      <div className="form-row">
+        <div className="form-field">
+          <label>
+            Дата <span className="req">*</span>
+          </label>
+          <input
+            type="date"
+            className={fieldErrors.expense_date ? 'has-error' : ''}
+            value={form.expense_date}
+            onChange={(e) =>
+              setForm({ ...form, expense_date: e.target.value })
+            }
+          />
+          {fieldErrors.expense_date && (
+            <div className="field-error">{fieldErrors.expense_date}</div>
+          )}
+        </div>
+
+        <div className="form-field">
+          <label>Количество / объём</label>
+          <input
+            value={form.quantity}
+            onChange={(e) => setForm({ ...form, quantity: e.target.value })}
+            placeholder="5 тонн, 200 л"
+          />
+        </div>
+      </div>
+
+      <div className="form-field">
+        <label>Группа</label>
+        <select
+          value={form.group_id}
+          onChange={(e) => setForm({ ...form, group_id: e.target.value })}
+        >
+          <option value="">— общий расход —</option>
+          {groups.map((g) => (
+            <option key={g.id} value={g.id}>
+              {g.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="form-field">
+        <label>Описание</label>
+        <input
+          value={form.description}
+          onChange={(e) => setForm({ ...form, description: e.target.value })}
+          placeholder="Сено на зимовку, бензин для трактора"
+        />
+      </div>
+
+      <button type="submit" className="submit-btn" disabled={saving}>
+        {saving ? '⏳ Сохранение…' : '💾 Сохранить'}
+      </button>
+    </form>
+  )
+}
+
+// ============ ФОРМА ДОХОДА ============
+function IncomeForm({
+  animals,
+  onCreated,
+}: {
+  animals: Animal[]
+  onCreated: () => void
+}) {
+  const [form, setForm] = useState({
+    category: 'meat',
+    amount: '',
+    income_date: new Date().toISOString().slice(0, 10),
+    description: '',
+    weight_kg: '',
+    animal_id: '',
+  })
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [generalError, setGeneralError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [animalSearch, setAnimalSearch] = useState('')
+
+  const cat = INCOME_CATEGORIES[form.category] || INCOME_CATEGORIES.other
+  const linksAnimal = cat.linksAnimal
+
+  // Только активные животные для выбора
+  const availableAnimals = useMemo(() => {
+    let list = animals.filter((a) => a.status === 'active')
+    if (animalSearch.trim()) {
+      const q = animalSearch.toLowerCase()
+      list = list.filter(
+        (a) =>
+          a.tag_number.toLowerCase().includes(q) ||
+          (a.name?.toLowerCase() || '').includes(q)
+      )
+    }
+    return list.sort((a, b) => a.tag_number.localeCompare(b.tag_number))
+  }, [animals, animalSearch])
+
+  const selectedAnimal = form.animal_id
+    ? animals.find((a) => a.id === Number(form.animal_id))
+    : null
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setFieldErrors({})
+    setGeneralError('')
+
+    const errs: Record<string, string> = {}
+    if (!form.amount || Number(form.amount) <= 0) {
+      errs.amount = 'Укажите сумму больше нуля'
+    }
+    // Для мяса и скота животное обязательно
+    if ((form.category === 'meat' || form.category === 'livestock') && !form.animal_id) {
+      errs.animal_id = 'Укажите животное'
+    }
+    if (Object.keys(errs).length > 0) {
+      setFieldErrors(errs)
+      setGeneralError('Исправьте выделенные поля')
+      return
+    }
+
+    setSaving(true)
+    try {
+      await axios.post(`${API}/incomes`, {
+        category: form.category,
+        amount: Number(form.amount),
+        income_date: form.income_date,
+        description: form.description.trim() || null,
+        weight_kg: form.weight_kg ? Number(form.weight_kg) : null,
+        animal_id: form.animal_id ? Number(form.animal_id) : null,
+      })
+      onCreated()
+    } catch (err) {
+      const p = parseApiError(err)
+      setFieldErrors(p.fields)
+      setGeneralError(p.general)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form className="form-card" onSubmit={submit} noValidate>
+      <h3>Новый доход</h3>
+
+      {generalError && (
+        <div className="form-error">
+          <span className="error-icon">⚠️</span>
+          <span>{generalError}</span>
+        </div>
+      )}
+
+      <div className="form-row">
+        <div className="form-field">
+          <label>
+            Категория <span className="req">*</span>
+          </label>
+          <select
+            value={form.category}
+            onChange={(e) => {
+              setForm({ ...form, category: e.target.value, animal_id: '' })
+              setAnimalSearch('')
+            }}
+          >
+            {Object.entries(INCOME_CATEGORIES).map(([k, v]) => (
+              <option key={k} value={k}>
+                {v.icon} {v.label}
+                {v.autoStatus ? ` (${v.autoStatus})` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="form-field">
+          <label>
+            Сумма, ₽ <span className="req">*</span>
+          </label>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            className={fieldErrors.amount ? 'has-error' : ''}
+            value={form.amount}
+            onChange={(e) => setForm({ ...form, amount: e.target.value })}
+            placeholder="250000"
+          />
+          {fieldErrors.amount && (
+            <div className="field-error">{fieldErrors.amount}</div>
+          )}
+        </div>
+      </div>
+
+      {/* Ссылка на животное для соответствующих категорий */}
+      {linksAnimal && (
+        <div className="form-field">
+          <label>
+            Животное
+            {(form.category === 'meat' || form.category === 'livestock') && (
+              <span className="req">*</span>
+            )}
+            {cat.autoStatus && (
+              <span className="auto-status-hint">
+                → авто-статус «{cat.autoStatus}»
+              </span>
+            )}
+          </label>
+
+          {selectedAnimal ? (
+            <div className="animal-chip-selected">
+              <span className="animal-chip-tag">
+                🐄 {selectedAnimal.tag_number}
+              </span>
+              {selectedAnimal.name && (
+                <span className="animal-chip-name">{selectedAnimal.name}</span>
+              )}
+              <button
+                type="button"
+                className="animal-chip-remove"
+                onClick={() => {
+                  setForm({ ...form, animal_id: '' })
+                  setAnimalSearch('')
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          ) : (
+            <div className="animal-picker">
+              <input
+                className="search-input"
+                placeholder="🔍 Поиск по бирке или кличке"
+                value={animalSearch}
+                onChange={(e) => setAnimalSearch(e.target.value)}
+              />
+              <div className="animal-picker-list">
+                {availableAnimals.length === 0 && (
+                  <p className="animal-picker-empty">
+                    {animalSearch
+                      ? 'Ничего не найдено'
+                      : 'Нет активных животных'}
+                  </p>
+                )}
+                {availableAnimals.slice(0, 30).map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    className="animal-picker-item"
+                    onClick={() => {
+                      setForm({ ...form, animal_id: String(a.id) })
+                      setAnimalSearch('')
+                      if (fieldErrors.animal_id) {
+                        const n = { ...fieldErrors }
+                        delete n.animal_id
+                        setFieldErrors(n)
+                      }
+                    }}
+                  >
+                    <span className="animal-picker-tag">{a.tag_number}</span>
+                    {a.name && (
+                      <span className="animal-picker-name">{a.name}</span>
+                    )}
+                    <span className="animal-picker-meta">
+                      {a.sex === 'female' ? '♀' : '♂'} ·{' '}
+                      {animalAge(a.birth_date)}
+                    </span>
+                  </button>
+                ))}
+                {availableAnimals.length > 30 && (
+                  <p className="animal-picker-more">
+                    + ещё {availableAnimals.length - 30}. Уточните поиск.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {fieldErrors.animal_id && (
+            <div className="field-error">{fieldErrors.animal_id}</div>
+          )}
+        </div>
+      )}
+
+      <div className="form-row">
+        <div className="form-field">
+          <label>
+            Дата <span className="req">*</span>
+          </label>
+          <input
+            type="date"
+            className={fieldErrors.income_date ? 'has-error' : ''}
+            value={form.income_date}
+            onChange={(e) =>
+              setForm({ ...form, income_date: e.target.value })
+            }
+          />
+          {fieldErrors.income_date && (
+            <div className="field-error">{fieldErrors.income_date}</div>
+          )}
+        </div>
+
+        <div className="form-field">
+          <label>Вес, кг</label>
+          <input
+            type="number"
+            step="0.1"
+            min="0"
+            value={form.weight_kg}
+            onChange={(e) => setForm({ ...form, weight_kg: e.target.value })}
+            placeholder="Для мяса"
+          />
+        </div>
+      </div>
+
+      <div className="form-field">
+        <label>Описание</label>
+        <input
+          value={form.description}
+          onChange={(e) => setForm({ ...form, description: e.target.value })}
+          placeholder="Продажа быка, 3 туши"
+        />
+      </div>
+
+      {(form.category === 'meat' || form.category === 'livestock') && (
+        <div className="auto-status-warning">
+          ⚠️ При сохранении животное автоматически станет{' '}
+          <b>{form.category === 'meat' ? 'Забито' : 'Продано'}</b>{' '}
+          и появится событие в его карточке.
+        </div>
+      )}
+
+      <button type="submit" className="submit-btn" disabled={saving}>
+        {saving ? '⏳ Сохранение…' : '💾 Сохранить'}
+      </button>
+    </form>
+  )
+}
+
 // ============ МОДАЛКА: СОСТАВ ГУРТА ============
 function GroupMembershipModal({
   group,
@@ -411,7 +1422,12 @@ function GroupMembershipModal({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  // Активные животные (не падёж, не проданы)
+  const [selectedOut, setSelectedOut] = useState<Set<number>>(new Set())
+  const [selectedIn, setSelectedIn] = useState<Set<number>>(new Set())
+
+  const [draggingId, setDraggingId] = useState<number | null>(null)
+  const [dragOverCol, setDragOverCol] = useState<'in' | 'out' | null>(null)
+
   const active = useMemo(
     () => animals.filter((a) => a.status === 'active'),
     [animals]
@@ -430,6 +1446,11 @@ function GroupMembershipModal({
     [active, group.id]
   )
 
+  useEffect(() => {
+    setSelectedOut(new Set())
+    setSelectedIn(new Set())
+  }, [search])
+
   const filterBySearch = (list: Animal[]) => {
     if (!search.trim()) return list
     const q = search.toLowerCase()
@@ -444,24 +1465,6 @@ function GroupMembershipModal({
   const filteredIn = filterBySearch(inGroup)
   const filteredOut = filterBySearch(notInGroup)
 
-  const addAll = async () => {
-    if (filteredOut.length === 0) return
-    setBusy(true)
-    setError('')
-    try {
-      await axios.post(`${API}/groups/${group.id}/assign`, {
-        animal_ids: filteredOut.map((a) => a.id),
-        action: 'add',
-      })
-      onChanged()
-    } catch (err) {
-      const p = parseApiError(err)
-      setError(p.general)
-    } finally {
-      setBusy(false)
-    }
-  }
-
   const addOne = async (id: number) => {
     setBusy(true)
     setError('')
@@ -469,6 +1472,11 @@ function GroupMembershipModal({
       await axios.post(`${API}/groups/${group.id}/assign`, {
         animal_ids: [id],
         action: 'add',
+      })
+      setSelectedOut((prev) => {
+        const n = new Set(prev)
+        n.delete(id)
+        return n
       })
       onChanged()
     } catch (err) {
@@ -487,6 +1495,68 @@ function GroupMembershipModal({
         animal_ids: [id],
         action: 'remove',
       })
+      setSelectedIn((prev) => {
+        const n = new Set(prev)
+        n.delete(id)
+        return n
+      })
+      onChanged()
+    } catch (err) {
+      const p = parseApiError(err)
+      setError(p.general)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const addSelected = async () => {
+    if (selectedOut.size === 0) return
+    setBusy(true)
+    setError('')
+    try {
+      await axios.post(`${API}/groups/${group.id}/assign`, {
+        animal_ids: Array.from(selectedOut),
+        action: 'add',
+      })
+      setSelectedOut(new Set())
+      onChanged()
+    } catch (err) {
+      const p = parseApiError(err)
+      setError(p.general)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeSelected = async () => {
+    if (selectedIn.size === 0) return
+    setBusy(true)
+    setError('')
+    try {
+      await axios.post(`${API}/groups/${group.id}/assign`, {
+        animal_ids: Array.from(selectedIn),
+        action: 'remove',
+      })
+      setSelectedIn(new Set())
+      onChanged()
+    } catch (err) {
+      const p = parseApiError(err)
+      setError(p.general)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const addAll = async () => {
+    if (filteredOut.length === 0) return
+    setBusy(true)
+    setError('')
+    try {
+      await axios.post(`${API}/groups/${group.id}/assign`, {
+        animal_ids: filteredOut.map((a) => a.id),
+        action: 'add',
+      })
+      setSelectedOut(new Set())
       onChanged()
     } catch (err) {
       const p = parseApiError(err)
@@ -507,6 +1577,7 @@ function GroupMembershipModal({
         animal_ids: inGroup.map((a) => a.id),
         action: 'remove',
       })
+      setSelectedIn(new Set())
       onChanged()
     } catch (err) {
       const p = parseApiError(err)
@@ -514,6 +1585,57 @@ function GroupMembershipModal({
     } finally {
       setBusy(false)
     }
+  }
+
+  const toggleSelectOut = (id: number) => {
+    setSelectedOut((prev) => {
+      const n = new Set(prev)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+  }
+
+  const toggleSelectIn = (id: number) => {
+    setSelectedIn((prev) => {
+      const n = new Set(prev)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+  }
+
+  const selectAllOut = () =>
+    setSelectedOut(new Set(filteredOut.map((a) => a.id)))
+  const selectAllIn = () => setSelectedIn(new Set(filteredIn.map((a) => a.id)))
+  const clearSelectionOut = () => setSelectedOut(new Set())
+  const clearSelectionIn = () => setSelectedIn(new Set())
+
+  const handleDragStart = (id: number) => setDraggingId(id)
+  const handleDragEnd = () => {
+    setDraggingId(null)
+    setDragOverCol(null)
+  }
+
+  const handleDragOver = (col: 'in' | 'out') => (e: React.DragEvent) => {
+    e.preventDefault()
+    setDragOverCol(col)
+  }
+
+  const handleDragLeave = () => setDragOverCol(null)
+
+  const handleDrop = (col: 'in' | 'out') => async (e: React.DragEvent) => {
+    e.preventDefault()
+    setDragOverCol(null)
+    const id = draggingId
+    setDraggingId(null)
+    if (!id) return
+    const animal = active.find((a) => a.id === id)
+    if (!animal) return
+    if (col === 'in' && animal.group_id === group.id) return
+    if (col === 'out' && animal.group_id !== group.id) return
+    if (col === 'in') await addOne(id)
+    else await removeOne(id)
   }
 
   return (
@@ -543,24 +1665,67 @@ function GroupMembershipModal({
             </div>
           )}
 
+          <div className="member-hint">
+            💡 Перетаскивайте карточки между колонками или используйте чекбоксы
+            для массовых операций
+          </div>
+
           <div className="member-columns">
-            {/* === Слева: не в гурте === */}
-            <div className="member-col">
+            <div
+              className={`member-col ${
+                dragOverCol === 'out' ? 'drag-over' : ''
+              }`}
+              onDragOver={handleDragOver('out')}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop('out')}
+            >
               <div className="member-col-header">
                 <span>
                   Доступные ({filteredOut.length}
                   {search && ` из ${notInGroup.length}`})
                 </span>
-                {filteredOut.length > 0 && (
+                <div className="member-col-actions">
                   <button
                     className="mini-add-btn"
-                    onClick={addAll}
+                    onClick={
+                      selectedOut.size === filteredOut.length &&
+                      filteredOut.length > 0
+                        ? clearSelectionOut
+                        : selectAllOut
+                    }
+                    disabled={filteredOut.length === 0}
+                  >
+                    {selectedOut.size === filteredOut.length &&
+                    filteredOut.length > 0
+                      ? '☐ Снять'
+                      : '☑ Все'}
+                  </button>
+                  {filteredOut.length > 0 && (
+                    <button
+                      className="mini-add-btn"
+                      onClick={addAll}
+                      disabled={busy}
+                    >
+                      ➕ Все
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {selectedOut.size > 0 && (
+                <div className="member-selected-bar">
+                  <span>
+                    <b>{selectedOut.size}</b> выбрано
+                  </span>
+                  <button
+                    className="btn-bulk-add"
+                    onClick={addSelected}
                     disabled={busy}
                   >
-                    ➕ Добавить всех
+                    ➕ Добавить
                   </button>
-                )}
-              </div>
+                </div>
+              )}
 
               <div className="member-list">
                 {filteredOut.length === 0 && (
@@ -572,7 +1737,22 @@ function GroupMembershipModal({
                 )}
 
                 {filteredOut.map((a) => (
-                  <div key={a.id} className="member-row">
+                  <div
+                    key={a.id}
+                    className={`member-row draggable ${
+                      draggingId === a.id ? 'dragging' : ''
+                    } ${selectedOut.has(a.id) ? 'selected' : ''}`}
+                    draggable
+                    onDragStart={() => handleDragStart(a.id)}
+                    onDragEnd={handleDragEnd}
+                  >
+                    <input
+                      type="checkbox"
+                      className="member-checkbox"
+                      checked={selectedOut.has(a.id)}
+                      onChange={() => toggleSelectOut(a.id)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
                     <div className="member-info">
                       <div className="member-tag">{a.tag_number}</div>
                       <div className="member-meta">
@@ -585,7 +1765,6 @@ function GroupMembershipModal({
                       className="member-btn add"
                       onClick={() => addOne(a.id)}
                       disabled={busy}
-                      title="Добавить в гурт"
                     >
                       ➕
                     </button>
@@ -594,23 +1773,61 @@ function GroupMembershipModal({
               </div>
             </div>
 
-            {/* === Справа: в гурте === */}
-            <div className="member-col">
+            <div
+              className={`member-col ${
+                dragOverCol === 'in' ? 'drag-over' : ''
+              }`}
+              onDragOver={handleDragOver('in')}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop('in')}
+            >
               <div className="member-col-header">
                 <span>
                   В гурте ({filteredIn.length}
                   {search && ` из ${inGroup.length}`})
                 </span>
-                {inGroup.length > 0 && (
+                <div className="member-col-actions">
                   <button
-                    className="mini-add-btn danger"
-                    onClick={removeAll}
+                    className="mini-add-btn"
+                    onClick={
+                      selectedIn.size === filteredIn.length &&
+                      filteredIn.length > 0
+                        ? clearSelectionIn
+                        : selectAllIn
+                    }
+                    disabled={filteredIn.length === 0}
+                  >
+                    {selectedIn.size === filteredIn.length &&
+                    filteredIn.length > 0
+                      ? '☐ Снять'
+                      : '☑ Все'}
+                  </button>
+                  {inGroup.length > 0 && (
+                    <button
+                      className="mini-add-btn danger"
+                      onClick={removeAll}
+                      disabled={busy}
+                    >
+                      ➖ Все
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {selectedIn.size > 0 && (
+                <div className="member-selected-bar">
+                  <span>
+                    <b>{selectedIn.size}</b> выбрано
+                  </span>
+                  <button
+                    className="btn-bulk-remove"
+                    onClick={removeSelected}
                     disabled={busy}
                   >
-                    ➖ Убрать всех
+                    ➖ Убрать
                   </button>
-                )}
-              </div>
+                </div>
+              )}
 
               <div className="member-list">
                 {filteredIn.length === 0 && (
@@ -622,7 +1839,22 @@ function GroupMembershipModal({
                 )}
 
                 {filteredIn.map((a) => (
-                  <div key={a.id} className="member-row">
+                  <div
+                    key={a.id}
+                    className={`member-row draggable ${
+                      draggingId === a.id ? 'dragging' : ''
+                    } ${selectedIn.has(a.id) ? 'selected' : ''}`}
+                    draggable
+                    onDragStart={() => handleDragStart(a.id)}
+                    onDragEnd={handleDragEnd}
+                  >
+                    <input
+                      type="checkbox"
+                      className="member-checkbox"
+                      checked={selectedIn.has(a.id)}
+                      onChange={() => toggleSelectIn(a.id)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
                     <div className="member-info">
                       <div className="member-tag">{a.tag_number}</div>
                       <div className="member-meta">
@@ -635,7 +1867,6 @@ function GroupMembershipModal({
                       className="member-btn remove"
                       onClick={() => removeOne(a.id)}
                       disabled={busy}
-                      title="Убрать из гурта"
                     >
                       ✕
                     </button>
@@ -657,7 +1888,7 @@ function GroupMembershipModal({
   )
 }
 
-// ============ ВКЛАДКА: ГУРТОВАЯ ВАКЦИНАЦИЯ ============
+// ============ ГУРТОВАЯ ВАКЦИНАЦИЯ ============
 function GroupVaccinationTab({
   groups,
   animals,
@@ -933,7 +2164,10 @@ function GroupVaccinationTab({
             <ol>
               <li>Выберите гурт сверху</li>
               <li>Увидите список предстоящих вакцинаций для всех животных</li>
-              <li>Нажмите «Отметить всем» — все вакцинации одного типа будут отмечены за раз</li>
+              <li>
+                Нажмите «Отметить всем» — все вакцинации одного типа будут
+                отмечены за раз
+              </li>
             </ol>
             <p>
               Всего в выбранном гурте:{' '}
@@ -1183,8 +2417,7 @@ function AnimalsTab({
               <span>🎂 {animalAge(a.birth_date)}</span>
               {a.group_id && (
                 <span>
-                  👥{' '}
-                  {groups.find((g) => g.id === a.group_id)?.name || '—'}
+                  👥 {groups.find((g) => g.id === a.group_id)?.name || '—'}
                 </span>
               )}
               {a.status !== 'active' && (
@@ -1701,17 +2934,11 @@ function CalendarTab({
                 {v.vet_name && <span>👨‍⚕️ {v.vet_name}</span>}
               </div>
               {!v.is_done ? (
-                <button
-                  className="complete-btn"
-                  onClick={() => complete(v)}
-                >
+                <button className="complete-btn" onClick={() => complete(v)}>
                   ✅ Отметить выполненной
                 </button>
               ) : (
-                <button
-                  className="delete-mini-btn"
-                  onClick={() => remove(v)}
-                >
+                <button className="delete-mini-btn" onClick={() => remove(v)}>
                   🗑 Удалить
                 </button>
               )}
@@ -2003,11 +3230,7 @@ function AnimalModal({
                     <div
                       key={v.id}
                       className={`vacc-row-new ${
-                        v.is_done
-                          ? 'vacc-done'
-                          : overdue
-                          ? 'vacc-overdue'
-                          : ''
+                        v.is_done ? 'vacc-done' : overdue ? 'vacc-overdue' : ''
                       }`}
                     >
                       <div className="vacc-main">

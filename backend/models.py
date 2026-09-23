@@ -2,7 +2,7 @@ from datetime import datetime, date
 from typing import Optional
 from sqlalchemy import (
     create_engine, Column, Integer, String, Boolean,
-    Date, DateTime, ForeignKey, Text, Enum as SQLEnum
+    Date, DateTime, ForeignKey, Text, Enum as SQLEnum, Float
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 import enum
@@ -23,6 +23,26 @@ class AnimalStatus(str, enum.Enum):
 class Sex(str, enum.Enum):
     MALE = "male"
     FEMALE = "female"
+
+
+class ExpenseCategory(str, enum.Enum):
+    FEED = "feed"              # Корм (сено, комбикорм, силос)
+    SALARY = "salary"          # Зарплата
+    VET = "vet"                # Ветеринария
+    FUEL = "fuel"              # Бензин / ГСМ
+    UTILITIES = "utilities"    # Содержание (электричество, вода)
+    EQUIPMENT = "equipment"    # Оборудование, инвентарь
+    TAXES = "taxes"            # Налоги, взносы
+    OTHER = "other"            # Прочее
+
+
+class IncomeCategory(str, enum.Enum):
+    MEAT = "meat"              # Продажа мяса
+    LIVESTOCK = "livestock"    # Продажа скота
+    MILK = "milk"              # Продажа молока
+    BYPRODUCTS = "byproducts"  # Субпродукты, шкуры
+    SUBSIDY = "subsidy"        # Субсидии
+    OTHER = "other"            # Прочее
 
 
 class Animal(Base):
@@ -81,13 +101,9 @@ class Vaccination(Base):
     animal_id = Column(Integer, ForeignKey("animals.id"), nullable=False)
     vaccine_id = Column(Integer, ForeignKey("vaccines.id"), nullable=False)
 
-    # Рекомендуемая дата (из календаря)
     recommended_date = Column(Date, nullable=True)
-    # Плановая дата (может быть скорректирована пользователем)
     planned_date = Column(Date, nullable=False)
-    # Фактическая дата (когда реально сделали)
     actual_date = Column(Date, nullable=True)
-    # Статус выполнения
     is_done = Column(Boolean, default=False)
 
     vet_name = Column(String, nullable=True)
@@ -109,6 +125,33 @@ class AnimalEvent(Base):
     created_at = Column(DateTime, default=datetime.now)
 
     animal = relationship("Animal", back_populates="events")
+
+
+class Expense(Base):
+    __tablename__ = "expenses"
+
+    id = Column(Integer, primary_key=True)
+    category = Column(SQLEnum(ExpenseCategory), nullable=False)
+    amount = Column(Float, nullable=False)         # сумма в рублях
+    expense_date = Column(Date, nullable=False)
+    description = Column(String, nullable=True)
+    quantity = Column(String, nullable=True)       # например, "5 тонн"
+    group_id = Column(Integer, ForeignKey("groups.id"), nullable=True)
+    animal_id = Column(Integer, ForeignKey("animals.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+
+class Income(Base):
+    __tablename__ = "incomes"
+
+    id = Column(Integer, primary_key=True)
+    category = Column(SQLEnum(IncomeCategory), nullable=False)
+    amount = Column(Float, nullable=False)
+    income_date = Column(Date, nullable=False)
+    description = Column(String, nullable=True)
+    weight_kg = Column(Float, nullable=True)       # вес (для продажи мяса)
+    animal_id = Column(Integer, ForeignKey("animals.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
 
 
 Base.metadata.create_all(bind=engine)

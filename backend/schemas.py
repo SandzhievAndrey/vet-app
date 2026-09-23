@@ -49,9 +49,11 @@ class GroupBase(BaseModel):
 class GroupCreate(GroupBase):
     pass
 
+
 class GroupUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+
 
 class GroupResponse(GroupBase):
     id: int
@@ -131,6 +133,7 @@ class EventResponse(EventBase):
     class Config:
         from_attributes = True
 
+
 # === Гуртовая вакцинация ===
 class GroupCompleteRequest(BaseModel):
     disease: str
@@ -138,7 +141,58 @@ class GroupCompleteRequest(BaseModel):
     vet_name: Optional[str] = None
     dose_used: Optional[str] = None
 
+
 # === Управление составом гурта ===
 class GroupAssignRequest(BaseModel):
     animal_ids: list[int]
     action: str  # "add" | "remove"
+
+
+# === Расходы ===
+class ExpenseCreate(BaseModel):
+    category: str
+    amount: float
+    expense_date: date
+    description: Optional[str] = None
+    quantity: Optional[str] = None
+    group_id: Optional[int] = None
+    animal_id: Optional[int] = None
+
+
+class ExpenseResponse(BaseModel):
+    id: int
+    category: str
+    amount: float
+    expense_date: date
+    description: Optional[str] = None
+    quantity: Optional[str] = None
+    group_id: Optional[int] = None
+    animal_id: Optional[int] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# === Доходы ===
+class IncomeCreate(BaseModel):
+    category: str
+    amount: float
+    income_date: date
+    description: Optional[str] = None
+    weight_kg: Optional[float] = None
+    animal_id: Optional[int] = None
+
+
+class IncomeResponse(BaseModel):
+    id: int
+    category: str
+    amount: float
+    income_date: date
+    description: Optional[str] = None
+    weight_kg: Optional[float] = None
+    animal_id: Optional[int] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
