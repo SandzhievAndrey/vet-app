@@ -352,9 +352,14 @@ def list_vaccinations(
     is_done: Optional[bool] = None,
     upcoming_days: Optional[int] = Query(None),
     animal_id: Optional[int] = None,
+    include_inactive: bool = False,
     db: Session = Depends(get_db),
 ):
-    q = db.query(Vaccination)
+    q = db.query(Vaccination).join(Animal, Vaccination.animal_id == Animal.id)
+
+    if not include_inactive:
+        q = q.filter(Animal.status == AnimalStatus.ACTIVE)
+
     if is_done is not None:
         q = q.filter(Vaccination.is_done == is_done)
     if animal_id:
@@ -508,7 +513,6 @@ def list_all_events(db: Session = Depends(get_db)):
     return db.query(AnimalEvent).order_by(AnimalEvent.event_date.desc()).limit(100).all()
 
 
-@app.post("/api/events", response_model=EventResponse, status_code=201)
 @app.post("/api/events", response_model=EventResponse, status_code=201)
 def create_event(data: EventCreate, db: Session = Depends(get_db)):
     animal = db.query(Animal).filter(Animal.id == data.animal_id).first()
@@ -852,24 +856,18 @@ def create_income(data: IncomeCreate, db: Session = Depends(get_db)):
     if data.weight_kg is not None and data.weight_kg < 0:
         errors["weight_kg"] = "Вес не может быть отрицательным"
 
-    # Проверка животного
     animal = None
     if data.animal_id:
         animal = db.query(Animal).filter(Animal.id == data.animal_id).first()
         if not animal:
             errors["animal_id"] = f"Животное #{data.animal_id} не найдено"
         else:
-            # Нельзя привязать доход к животному, которое уже продано/забито
             if animal.status.value in ("sold", "slaughtered"):
                 errors["animal_id"] = f"Животное {animal.tag_number} уже {('продано' if animal.status.value == 'sold' else 'забито')}"
 
     if errors:
         raise HTTPException(status_code=400, detail={"message": "Проверьте поля формы", "errors": errors})
 
-    # Логика автостатуса:
-    # "livestock" (продажа скота) → статус sold
-    # "meat" (продажа мяса = забой) → статус slaughtered
-    # "milk", "byproducts", "subsidy" → статус не меняется
     auto_status_changed = None
     if animal and data.category in ("livestock", "meat"):
         if data.category == "livestock":
@@ -879,7 +877,6 @@ def create_income(data: IncomeCreate, db: Session = Depends(get_db)):
             animal.status = AnimalStatus.SLAUGHTERED
             auto_status_changed = "slaughtered"
 
-        # Добавляем событие
         event = AnimalEvent(
             animal_id=animal.id,
             event_type=auto_status_changed,
@@ -994,15 +991,105 @@ def dashboard(db: Session = Depends(get_db)):
     today = date.today()
     week_later = today + timedelta(days=7)
 
-    upcoming = db.query(Vaccination).filter(
-        Vaccination.is_done == False,
-        Vaccination.planned_date >= today,
-        Vaccination.planned_date <= week_later,
-    ).count()
+    upcoming = (
+        db.query(Vaccination)
+        .join(Animal, Vaccination.animal_id == Animal.id)
+        .filter(
+            Animal.status == AnimalStatus.ACTIVE,
+            Vaccination.is_done == False,
+            Vaccination.planned_date >= today,
+            Vaccination.planned_date <= week_later,
+        )
+        .count()
+    )
 
-    overdue = db.query(Vaccination).filter(
-        Vaccination.is_done == False,
-        Vaccination.planned_date < today,
-    ).count()
+    overdue = (
+        db.query(Vaccination)
+        .join(Animal, Vaccination.animal_id == Animal.id)
+        .filter(
+            Animal.status == AnimalStatus.ACTIVE,
+            Vaccination.is_done == False,
+            Vaccination.planned_date < today,
+        )
+        .count()
+    )
 
     return {"total_active": total, "upcoming_7_days": upcoming, "overdue": overdue}
+
+
+@app.get("/api/dashboard/full")
+def dashboard_full(db: Session = Depends(get_db)):
+    """Расширенная сводка: поголовье, вакцинация, финансы, события."""
+    today = date.today()
+    week_later = today + timedelta(days=7)
+    month_ago = today - timedelta(days=30)
+    year_ago = today - timedelta(days=365)
+
+    # Вакцинация (только активные)
+    upcoming_7 = (
+        db.query(Vaccination)
+        .join(Animal, Vaccination.animal_id == Animal.id)
+        .filter(
+            Animal.status == AnimalStatus.ACTIVE,
+            Vaccination.is_done == False,
+            Vaccination.planned_date >= today,
+            Vaccination.planned_date <= week_later,
+        )
+        .count()
+    )
+    overdue = (
+        db.query(Vaccination)
+        .join(Animal, Vaccination.animal_id == Animal.id)
+        .filter(
+            Animal.status == AnimalStatus.ACTIVE,
+            Vaccination.is_done == False,
+            Vaccination.planned_date < today,
+        )
+        .count()
+    )
+
+    # Поголовье
+    active_q = db.query(Animal).filter(Animal.status == AnimalStatus.ACTIVE)
+    total_active = active_q.count()
+    cows = active_q.filter(Animal.sex == Sex.FEMALE).count()
+    bulls = active_q.filter(Animal.sex == Sex.MALE).count()
+    young = active_q.filter(
+        Animal.birth_date.isnot(None),
+        Animal.birth_date >= year_ago,
+    ).count()
+    groups_count = db.query(Group).count()
+
+    # Финансы за 30 дней
+    incomes_30 = db.query(Income).filter(Income.income_date >= month_ago).all()
+    expenses_30 = db.query(Expense).filter(Expense.expense_date >= month_ago).all()
+    income_30 = sum(i.amount for i in incomes_30)
+    expense_30 = sum(e.amount for e in expenses_30)
+    profit_30 = income_30 - expense_30
+
+    # События за 30 дней
+    events_30 = (
+        db.query(AnimalEvent)
+        .filter(AnimalEvent.event_date >= month_ago)
+        .count()
+    )
+
+    return {
+        "vaccination": {
+            "active": total_active,
+            "upcoming_7": upcoming_7,
+            "overdue": overdue,
+        },
+        "animals": {
+            "total": total_active,
+            "cows": cows,
+            "bulls": bulls,
+            "young": young,
+            "groups": groups_count,
+        },
+        "finance_30d": {
+            "income": round(income_30, 2),
+            "expense": round(expense_30, 2),
+            "profit": round(profit_30, 2),
+        },
+        "events_30d": events_30,
+    }

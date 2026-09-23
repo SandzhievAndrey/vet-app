@@ -63,6 +63,19 @@ type Dashboard = {
   overdue: number
 }
 
+type DashboardFull = {
+  vaccination: { active: number; upcoming_7: number; overdue: number }
+  animals: {
+    total: number
+    cows: number
+    bulls: number
+    young: number
+    groups: number
+  }
+  finance_30d: { income: number; expense: number; profit: number }
+  events_30d: number
+}
+
 type GroupUpcoming = {
   disease: string
   vaccine_id: number
@@ -2206,7 +2219,7 @@ function GroupVaccinationTab({
   )
 }
 
-// ============ ДАШБОРД ============
+// ============ ДАШБОРД ============// ============ ДАШБОРД ============
 function DashboardTab({
   dashboard,
   onReload,
@@ -2214,102 +2227,218 @@ function DashboardTab({
   dashboard: Dashboard | null
   onReload: () => void
 }) {
+  const [full, setFull] = useState<DashboardFull | null>(null)
   const [upcoming, setUpcoming] = useState<
     (Vaccination & { animal?: Animal; vaccine?: Vaccine })[]
   >([])
+  const [recentEvents, setRecentEvents] = useState<
+    (AnimalEvent & { animal?: Animal })[]
+  >([])
+  const [loading, setLoading] = useState(true)
+
+  const loadDashboard = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [fullRes, vacRes, anRes, vcRes, evRes] = await Promise.all([
+        axios.get<DashboardFull>(`${API}/dashboard/full`),
+        axios.get<Vaccination[]>(`${API}/vaccinations?is_done=false`),
+        axios.get<Animal[]>(`${API}/animals`),
+        axios.get<Vaccine[]>(`${API}/vaccines`),
+        axios.get<AnimalEvent[]>(`${API}/events`),
+      ])
+
+      setFull(fullRes.data)
+
+      const anMap: Record<number, Animal> = {}
+      anRes.data.forEach((a) => (anMap[a.id] = a))
+      const vcMap: Record<number, Vaccine> = {}
+      vcRes.data.forEach((v) => (vcMap[v.id] = v))
+
+      setUpcoming(
+        vacRes.data
+          .map((v) => ({
+            ...v,
+            animal: anMap[v.animal_id],
+            vaccine: vcMap[v.vaccine_id],
+          }))
+          .sort((a, b) => a.planned_date.localeCompare(b.planned_date))
+          .slice(0, 7)
+      )
+
+      setRecentEvents(
+        evRes.data
+          .slice(0, 5)
+          .map((ev) => ({ ...ev, animal: anMap[ev.animal_id] }))
+      )
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        const { data: vacs } = await axios.get<Vaccination[]>(
-          `${API}/vaccinations?is_done=false`
-        )
-        const { data: an } = await axios.get<Animal[]>(`${API}/animals`)
-        const { data: vc } = await axios.get<Vaccine[]>(`${API}/vaccines`)
-        const anMap: Record<number, Animal> = {}
-        an.forEach((a) => (anMap[a.id] = a))
-        const vcMap: Record<number, Vaccine> = {}
-        vc.forEach((v) => (vcMap[v.id] = v))
-        setUpcoming(
-          vacs
-            .map((v) => ({
-              ...v,
-              animal: anMap[v.animal_id],
-              vaccine: vcMap[v.vaccine_id],
-            }))
-            .sort((a, b) => a.planned_date.localeCompare(b.planned_date))
-            .slice(0, 10)
-        )
-      } catch (err) {
-        console.error(err)
-      }
-    }
-    load()
-  }, [dashboard])
+    loadDashboard()
+  }, [loadDashboard, dashboard])
+
+  if (loading && !full) {
+    return <p className="empty">Загрузка…</p>
+  }
 
   return (
     <div>
+      {/* === ВАКЦИНАЦИЯ === */}
+      <h2 className="section-title">💉 Вакцинация</h2>
       <div className="stats-row">
         <div className="stat-card">
-          <div className="stat-value blue">{dashboard?.total_active ?? 0}</div>
+          <div className="stat-value blue">
+            {full?.vaccination.active ?? 0}
+          </div>
           <div className="stat-label">Активных голов</div>
         </div>
         <div className="stat-card">
           <div className="stat-value orange">
-            {dashboard?.upcoming_7_days ?? 0}
+            {full?.vaccination.upcoming_7 ?? 0}
           </div>
           <div className="stat-label">На неделе</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value red">{dashboard?.overdue ?? 0}</div>
+          <div className="stat-value red">
+            {full?.vaccination.overdue ?? 0}
+          </div>
           <div className="stat-label">Просрочено</div>
         </div>
       </div>
 
-      <h2 className="section-title">Ближайшие вакцинации</h2>
-
-      {upcoming.length === 0 && (
-        <p className="empty">Нет предстоящих вакцинаций</p>
-      )}
-
-      <div className="list">
-        {upcoming.map((v) => {
-          const days = daysUntil(v.planned_date)
-          const urgent = days < 0
-          const soon = days >= 0 && days <= 3
-          return (
-            <div
-              key={v.id}
-              className={`card ${
-                urgent ? 'card-urgent' : soon ? 'card-soon' : ''
-              }`}
-            >
-              <div className="card-title">
-                <span className="tag">{v.animal?.tag_number || '—'}</span>
-                <span
-                  className={`badge ${
-                    urgent ? 'badge-red' : soon ? 'badge-orange' : ''
-                  }`}
-                >
-                  {urgent
-                    ? `просрочено на ${Math.abs(days)} дн.`
-                    : days === 0
-                    ? 'сегодня'
-                    : days === 1
-                    ? 'завтра'
-                    : `через ${days} дн.`}
-                </span>
-              </div>
-              <div className="card-meta">
-                <span>💉 {v.vaccine?.disease || 'вакцинация'}</span>
-                <span>📅 {formatDate(v.planned_date)}</span>
-              </div>
-            </div>
-          )
-        })}
+      {/* === ПОГОЛОВЬЕ === */}
+      <h2 className="section-title">🐄 Поголовье</h2>
+      <div className="dash-grid-4">
+        <div className="dash-mini">
+          <div className="dash-mini-icon">🐄</div>
+          <div className="dash-mini-value">{full?.animals.cows ?? 0}</div>
+          <div className="dash-mini-label">Коровы</div>
+        </div>
+        <div className="dash-mini">
+          <div className="dash-mini-icon">🐂</div>
+          <div className="dash-mini-value">{full?.animals.bulls ?? 0}</div>
+          <div className="dash-mini-label">Быки</div>
+        </div>
+        <div className="dash-mini">
+          <div className="dash-mini-icon">🐮</div>
+          <div className="dash-mini-value">{full?.animals.young ?? 0}</div>
+          <div className="dash-mini-label">Молодняк</div>
+        </div>
+        <div className="dash-mini">
+          <div className="dash-mini-icon">👥</div>
+          <div className="dash-mini-value">{full?.animals.groups ?? 0}</div>
+          <div className="dash-mini-label">Групп</div>
+        </div>
       </div>
 
-      <button className="reload-btn" onClick={onReload}>
+      {/* === ФИНАНСЫ 30 ДНЕЙ === */}
+      <h2 className="section-title">💰 Финансы за 30 дней</h2>
+      <div className="dash-fin-row">
+        <div className="dash-fin-card income">
+          <div className="dash-fin-label">Доходы</div>
+          <div className="dash-fin-value">
+            +{formatMoney(full?.finance_30d.income ?? 0)}
+          </div>
+        </div>
+        <div className="dash-fin-card expense">
+          <div className="dash-fin-label">Расходы</div>
+          <div className="dash-fin-value">
+            −{formatMoney(full?.finance_30d.expense ?? 0)}
+          </div>
+        </div>
+        <div
+          className={`dash-fin-card profit ${
+            (full?.finance_30d.profit ?? 0) >= 0 ? 'positive' : 'negative'
+          }`}
+        >
+          <div className="dash-fin-label">Прибыль</div>
+          <div className="dash-fin-value">
+            {formatMoney(full?.finance_30d.profit ?? 0)}
+          </div>
+        </div>
+      </div>
+
+      {/* === БЛИЖАЙШИЕ ВАКЦИНАЦИИ === */}
+      <h2 className="section-title">📅 Ближайшие вакцинации</h2>
+
+      {upcoming.length === 0 ? (
+        <p className="empty">Нет предстоящих вакцинаций</p>
+      ) : (
+        <div className="list">
+          {upcoming.map((v) => {
+            const days = daysUntil(v.planned_date)
+            const urgent = days < 0
+            const soon = days >= 0 && days <= 3
+            return (
+              <div
+                key={v.id}
+                className={`card ${
+                  urgent ? 'card-urgent' : soon ? 'card-soon' : ''
+                }`}
+              >
+                <div className="card-title">
+                  <span className="tag">{v.animal?.tag_number || '—'}</span>
+                  <span
+                    className={`badge ${
+                      urgent ? 'badge-red' : soon ? 'badge-orange' : ''
+                    }`}
+                  >
+                    {urgent
+                      ? `просрочено на ${Math.abs(days)} дн.`
+                      : days === 0
+                      ? 'сегодня'
+                      : days === 1
+                      ? 'завтра'
+                      : `через ${days} дн.`}
+                  </span>
+                </div>
+                <div className="card-meta">
+                  <span>💉 {v.vaccine?.disease || 'вакцинация'}</span>
+                  <span>📅 {formatDate(v.planned_date)}</span>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* === ПОСЛЕДНИЕ СОБЫТИЯ === */}
+      <h2 className="section-title">📝 Последние события</h2>
+
+      {recentEvents.length === 0 ? (
+        <p className="empty">Событий пока нет</p>
+      ) : (
+        <div className="events-list">
+          {recentEvents.map((ev) => (
+            <div key={ev.id} className="dash-event-row">
+              <div className="dash-event-icon">
+                {EVENT_LABELS[ev.event_type]?.split(' ')[0] || '📝'}
+              </div>
+              <div className="dash-event-info">
+                <div className="dash-event-title">
+                  {EVENT_LABELS[ev.event_type] || ev.event_type}
+                  {ev.animal && (
+                    <span className="dash-event-tag">
+                      {' '}
+                      · 🐄 {ev.animal.tag_number}
+                    </span>
+                  )}
+                </div>
+                <div className="dash-event-meta">
+                  📅 {formatDate(ev.event_date)}
+                  {ev.description && ` · ${ev.description}`}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button className="reload-btn" onClick={loadDashboard}>
         🔄 Обновить
       </button>
     </div>
