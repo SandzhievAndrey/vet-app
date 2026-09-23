@@ -2230,3 +2230,116 @@ textarea {
     min-width: 100%;
   }
 }
+
+/* ===== КНОПКА ПРОДАЖИ В ШАПКЕ МОДАЛКИ ===== */
+.sell-header-btn {
+  height: 34px;
+  padding: 0 var(--sp-3);
+  background: var(--green);
+  color: #fff;
+  border: none;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  transition: opacity 0.12s;
+  white-space: nowrap;
+}
+
+.sell-header-btn:hover {
+  opacity: 0.9;
+}
+
+/* ===== ФОРМА ПРОДАЖИ ===== */
+.sell-form {
+  margin: var(--sp-4) 0;
+  padding: var(--sp-4);
+  background: var(--green-soft);
+  border-radius: var(--r-md);
+  border: 1px solid rgba(52, 199, 89, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.sell-form h4 {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-bold);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--text);
+}
+
+.sell-tabs {
+  display: flex;
+  gap: var(--sp-1);
+  background: var(--card);
+  padding: 3px;
+  border-radius: var(--r-sm);
+}
+
+.sell-tab {
+  flex: 1;
+  padding: 8px var(--sp-3);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.sell-tab:hover {
+  color: var(--text);
+}
+
+.sell-tab.active {
+  background: var(--green);
+  color: #fff;
+}
+
+/* ===== СОБЫТИЯ ЗАБЛОКИРОВАНЫ ===== */
+.events-locked {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--text-tertiary);
+  background: var(--separator-soft);
+  padding: 4px 10px;
+  border-radius: var(--r-pill);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.events-locked-hint {
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--separator-soft);
+  color: var(--text-secondary);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  margin-bottom: var(--sp-2);
+}
+
+.events-locked-hint b {
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+}
+
+/* Замок в вакцинации */
+.vacc-locked {
+  font-size: 16px;
+  flex-shrink: 0;
+  opacity: 0.6;
+}

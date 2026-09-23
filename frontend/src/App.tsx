@@ -460,7 +460,7 @@ function App() {
   )
 }
 
-// ============ ВКЛАДКА: ВАКЦИНАЦИЯ (обёртка) ============
+// ============ ВКЛАДКА: ВАКЦИНАЦИЯ ============
 function VaccinationTab({
   groups,
   animals,
@@ -3019,6 +3019,20 @@ function AnimalModal({
   const [actualDate, setActualDate] = useState('')
   const [vetName, setVetName] = useState('')
 
+  // Продажа
+  const [showSellForm, setShowSellForm] = useState(false)
+  const [sellForm, setSellForm] = useState({
+    category: 'livestock',
+    amount: '',
+    income_date: new Date().toISOString().slice(0, 10),
+    weight_kg: '',
+    description: '',
+  })
+  const [sellErrors, setSellErrors] = useState<Record<string, string>>({})
+  const [sellGeneral, setSellGeneral] = useState('')
+  const [selling, setSelling] = useState(false)
+  const [sellSuccess, setSellSuccess] = useState('')
+
   const loadEvents = useCallback(async () => {
     try {
       const { data } = await axios.get<AnimalEvent[]>(
@@ -3123,6 +3137,67 @@ function AnimalModal({
     }
   }
 
+  const openSellForm = (category: 'livestock' | 'meat') => {
+    setSellForm({
+      category,
+      amount: '',
+      income_date: new Date().toISOString().slice(0, 10),
+      weight_kg: '',
+      description: '',
+    })
+    setSellErrors({})
+    setSellGeneral('')
+    setSellSuccess('')
+    setShowSellForm(true)
+  }
+
+  const submitSell = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSellErrors({})
+    setSellGeneral('')
+    setSellSuccess('')
+
+    const errs: Record<string, string> = {}
+    if (!sellForm.amount || Number(sellForm.amount) <= 0) {
+      errs.amount = 'Укажите сумму больше нуля'
+    }
+    if (sellForm.category === 'meat' && !sellForm.weight_kg) {
+      errs.weight_kg = 'Укажите вес туши'
+    }
+    if (Object.keys(errs).length > 0) {
+      setSellErrors(errs)
+      setSellGeneral('Исправьте выделенные поля')
+      return
+    }
+
+    setSelling(true)
+    try {
+      await axios.post(`${API}/incomes`, {
+        category: sellForm.category,
+        amount: Number(sellForm.amount),
+        income_date: sellForm.income_date,
+        description: sellForm.description.trim() || null,
+        weight_kg: sellForm.weight_kg ? Number(sellForm.weight_kg) : null,
+        animal_id: animal.id,
+      })
+      setSellSuccess(
+        `✅ Доход ${Number(sellForm.amount).toLocaleString('ru-RU')} ₽ сохранён. Животное в статусе «${
+          sellForm.category === 'meat' ? 'Забито' : 'Продано'
+        }».`
+      )
+      setShowSellForm(false)
+      loadEvents()
+      onReload()
+      setTimeout(() => setSellSuccess(''), 5000)
+    } catch (err) {
+      const p = parseApiError(err)
+      setSellErrors(p.fields)
+      setSellGeneral(p.general)
+    } finally {
+      setSelling(false)
+    }
+  }
+
   const printCard = () => {
     const sorted = [...vaccinations].sort((a, b) =>
       a.planned_date.localeCompare(b.planned_date)
@@ -3166,6 +3241,7 @@ function AnimalModal({
     a.planned_date.localeCompare(b.planned_date)
   )
   const doneCount = sorted.filter((v) => v.is_done).length
+  const isActive = animal.status === 'active'
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -3173,11 +3249,24 @@ function AnimalModal({
         <div className="modal-header">
           <h2>🐄 {animal.tag_number}</h2>
           <div className="modal-header-actions">
-            <button className="icon-btn" onClick={printCard}>
+            {isActive && mode === 'view' && (
+              <button
+                className="sell-header-btn"
+                onClick={() => openSellForm('livestock')}
+                title="Продать / Забить"
+              >
+                💰 Продать
+              </button>
+            )}
+            <button className="icon-btn" onClick={printCard} title="Печать">
               🖨
             </button>
             {mode === 'view' && (
-              <button className="icon-btn" onClick={() => setMode('edit')}>
+              <button
+                className="icon-btn"
+                onClick={() => setMode('edit')}
+                title="Редактировать"
+              >
                 ✏️
               </button>
             )}
@@ -3188,6 +3277,12 @@ function AnimalModal({
         </div>
 
         <div className="modal-body">
+          {sellSuccess && (
+            <div className="gv-success" style={{ marginBottom: 16 }}>
+              <span>{sellSuccess}</span>
+            </div>
+          )}
+
           {mode === 'view' && (
             <>
               <div className="info-grid">
@@ -3223,6 +3318,172 @@ function AnimalModal({
                 </div>
               </div>
 
+              {/* Форма продажи */}
+              {showSellForm && (
+                <form className="sell-form" onSubmit={submitSell} noValidate>
+                  <h4>
+                    💰{' '}
+                    {sellForm.category === 'meat'
+                      ? 'Забой на мясо'
+                      : 'Продажа скота'}
+                    <button
+                      type="button"
+                      className="close-x"
+                      onClick={() => setShowSellForm(false)}
+                    >
+                      ✕
+                    </button>
+                  </h4>
+
+                  <div className="sell-tabs">
+                    <button
+                      type="button"
+                      className={
+                        sellForm.category === 'livestock'
+                          ? 'sell-tab active'
+                          : 'sell-tab'
+                      }
+                      onClick={() =>
+                        setSellForm({
+                          ...sellForm,
+                          category: 'livestock',
+                          weight_kg: '',
+                        })
+                      }
+                    >
+                      🐄 Скот
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        sellForm.category === 'meat'
+                          ? 'sell-tab active'
+                          : 'sell-tab'
+                      }
+                      onClick={() =>
+                        setSellForm({ ...sellForm, category: 'meat' })
+                      }
+                    >
+                      🥩 Мясо
+                    </button>
+                  </div>
+
+                  {sellGeneral && (
+                    <div className="form-error">
+                      <span className="error-icon">⚠️</span>
+                      <span>{sellGeneral}</span>
+                    </div>
+                  )}
+
+                  <div className="form-row">
+                    <div className="form-field">
+                      <label>
+                        Сумма, ₽ <span className="req">*</span>
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        className={sellErrors.amount ? 'has-error' : ''}
+                        value={sellForm.amount}
+                        onChange={(e) =>
+                          setSellForm({ ...sellForm, amount: e.target.value })
+                        }
+                        placeholder="150000"
+                        autoFocus
+                      />
+                      {sellErrors.amount && (
+                        <div className="field-error">{sellErrors.amount}</div>
+                      )}
+                    </div>
+
+                    <div className="form-field">
+                      <label>
+                        Дата <span className="req">*</span>
+                      </label>
+                      <input
+                        type="date"
+                        value={sellForm.income_date}
+                        onChange={(e) =>
+                          setSellForm({
+                            ...sellForm,
+                            income_date: e.target.value,
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  {sellForm.category === 'meat' && (
+                    <div className="form-field">
+                      <label>
+                        Вес туши, кг <span className="req">*</span>
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        className={sellErrors.weight_kg ? 'has-error' : ''}
+                        value={sellForm.weight_kg}
+                        onChange={(e) =>
+                          setSellForm({
+                            ...sellForm,
+                            weight_kg: e.target.value,
+                          })
+                        }
+                        placeholder="250"
+                      />
+                      {sellErrors.weight_kg && (
+                        <div className="field-error">
+                          {sellErrors.weight_kg}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="form-field">
+                    <label>Описание</label>
+                    <input
+                      value={sellForm.description}
+                      onChange={(e) =>
+                        setSellForm({
+                          ...sellForm,
+                          description: e.target.value,
+                        })
+                      }
+                      placeholder="Покупатель, примечания"
+                    />
+                  </div>
+
+                  <div className="auto-status-warning">
+                    ⚠️ Животное автоматически станет{' '}
+                    <b>
+                      {sellForm.category === 'meat' ? 'Забито' : 'Продано'}
+                    </b>{' '}
+                    и появится событие в карточке. Доход сохранится в разделе
+                    «Финансы».
+                  </div>
+
+                  <div className="complete-actions">
+                    <button
+                      type="button"
+                      className="btn-cancel"
+                      onClick={() => setShowSellForm(false)}
+                      disabled={selling}
+                    >
+                      Отмена
+                    </button>
+                    <button
+                      type="submit"
+                      className="btn-save"
+                      disabled={selling}
+                    >
+                      {selling ? '⏳ Сохраняю…' : '💰 Сохранить продажу'}
+                    </button>
+                  </div>
+                </form>
+              )}
+
               {error && (
                 <div className="form-error">
                   <span className="error-icon">⚠️</span>
@@ -3230,15 +3491,17 @@ function AnimalModal({
                 </div>
               )}
 
-              <button
-                className="gen-btn"
-                onClick={generate}
-                disabled={generating}
-              >
-                {generating
-                  ? '⏳ Генерация…'
-                  : '📅 Сгенерировать календарь вакцинаций'}
-              </button>
+              {isActive && (
+                <button
+                  className="gen-btn"
+                  onClick={generate}
+                  disabled={generating}
+                >
+                  {generating
+                    ? '⏳ Генерация…'
+                    : '📅 Сгенерировать календарь вакцинаций'}
+                </button>
+              )}
 
               <h3 className="section-subtitle">
                 💉 Вакцинации ({doneCount} из {sorted.length})
@@ -3276,7 +3539,7 @@ function AnimalModal({
                       </div>
                       {v.is_done ? (
                         <div className="vacc-status-done">✅</div>
-                      ) : (
+                      ) : isActive ? (
                         <button
                           className="vacc-complete-mini"
                           onClick={() => {
@@ -3289,6 +3552,8 @@ function AnimalModal({
                         >
                           ✓
                         </button>
+                      ) : (
+                        <div className="vacc-locked">🔒</div>
                       )}
                     </div>
                   )
@@ -3349,15 +3614,33 @@ function AnimalModal({
 
               <h3 className="section-subtitle">
                 📝 События ({events.length})
-                <button
-                  className="mini-add-btn"
-                  onClick={() => setShowEventForm(!showEventForm)}
-                >
-                  {showEventForm ? '✕' : '+ Добавить'}
-                </button>
+                {isActive ? (
+                  <button
+                    className="mini-add-btn"
+                    onClick={() => setShowEventForm(!showEventForm)}
+                  >
+                    {showEventForm ? '✕' : '+ Добавить'}
+                  </button>
+                ) : (
+                  <span className="events-locked">🔒 Животное выбыло</span>
+                )}
               </h3>
 
-              {showEventForm && (
+              {!isActive && (
+                <div className="events-locked-hint">
+                  Животное{' '}
+                  <b>
+                    {animal.status === 'sold'
+                      ? 'продано'
+                      : animal.status === 'dead'
+                      ? 'пало'
+                      : 'забито'}
+                  </b>
+                  . Новые события добавлять нельзя — только история.
+                </div>
+              )}
+
+              {isActive && showEventForm && (
                 <form className="form-card compact" onSubmit={submitEvent}>
                   <div className="form-row">
                     <div className="form-field">

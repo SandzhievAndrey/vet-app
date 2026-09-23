@@ -509,10 +509,28 @@ def list_all_events(db: Session = Depends(get_db)):
 
 
 @app.post("/api/events", response_model=EventResponse, status_code=201)
+@app.post("/api/events", response_model=EventResponse, status_code=201)
 def create_event(data: EventCreate, db: Session = Depends(get_db)):
     animal = db.query(Animal).filter(Animal.id == data.animal_id).first()
     if not animal:
         raise HTTPException(status_code=404, detail={"message": "Ошибка", "errors": {"animal_id": "Животное не найдено"}})
+
+    # Запрет событий для выбывших животных
+    if animal.status != AnimalStatus.ACTIVE:
+        status_label = {
+            "sold": "продан",
+            "dead": "пал",
+            "slaughtered": "забит",
+        }.get(animal.status.value, "неактивен")
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "События недоступны",
+                "errors": {
+                    "animal_id": f"Животное {animal.tag_number} {status_label}. Добавление событий заблокировано."
+                },
+            },
+        )
 
     valid_types = ("calving", "transfer", "sold", "dead", "slaughtered", "other")
     if data.event_type not in valid_types:
