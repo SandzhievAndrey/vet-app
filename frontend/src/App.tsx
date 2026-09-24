@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { api } from './api'
 import { useAuth } from './AuthContext'
 import AuthScreen from './AuthScreen'
+import ProfileTab from './ProfileTab'
 import './App.css'
 
 const API = 'http://localhost:8000/api'
@@ -130,7 +131,13 @@ type FinanceSummary = {
   profit_per_animal: number | null
 }
 
-type Tab = 'dashboard' | 'animals' | 'groups' | 'vaccination' | 'finance'
+type Tab =
+  | 'dashboard'
+  | 'animals'
+  | 'groups'
+  | 'vaccination'
+  | 'finance'
+  | 'profile'
 
 // ============ УТИЛИТЫ ============
 function formatDate(iso: string | null | undefined): string {
@@ -215,6 +222,7 @@ const PAGE_TITLES: Record<Tab, string> = {
   groups: 'Группы',
   vaccination: 'Вакцинация',
   finance: 'Финансы',
+  profile: 'Профиль',
 }
 
 function parseApiError(err: any): {
@@ -396,6 +404,14 @@ function App() {
             <span className="drawer-item-icon">💰</span>
             <span className="drawer-item-text">Финансы</span>
           </button>
+
+          <button
+            className={`drawer-item ${tab === 'profile' ? 'active' : ''}`}
+            onClick={() => goTo('profile')}
+          >
+            <span className="drawer-item-icon">👤</span>
+            <span className="drawer-item-text">Профиль</span>
+          </button>
         </nav>
 
         <div className="drawer-user">
@@ -468,6 +484,8 @@ function App() {
         {tab === 'finance' && (
           <FinanceTab groups={groups} animals={animals} onReloadAll={loadAll} />
         )}
+
+        {tab === 'profile' && <ProfileTab />}
       </main>
 
       {selectedAnimal && (

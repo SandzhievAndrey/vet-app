@@ -2864,3 +2864,279 @@ textarea {
 .drawer-user-logout:hover {
   background: var(--red-soft);
 }
+
+/* ============================================
+   PROFILE
+   ============================================ */
+.prof-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-5);
+  background: var(--card);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-card);
+  margin-bottom: var(--sp-4);
+}
+
+.prof-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #5856d6 0%, #af52de 100%);
+  color: #fff;
+  font-size: 26px;
+  font-weight: var(--fw-bold);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.prof-headline {
+  flex: 1;
+  min-width: 0;
+}
+
+.prof-name {
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-bold);
+  letter-spacing: -0.3px;
+  margin-bottom: 2px;
+}
+
+.prof-nick {
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.prof-role {
+  display: inline-block;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--blue);
+  background: var(--blue-soft);
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+}
+
+.prof-card {
+  background: var(--card);
+  border-radius: var(--r-md);
+  padding: var(--sp-4) var(--sp-5);
+  box-shadow: var(--shadow-card);
+  margin-bottom: var(--sp-4);
+}
+
+.prof-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--separator);
+}
+
+.prof-card-head h3 {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-bold);
+  color: var(--text);
+}
+
+.prof-edit-btn {
+  height: 32px;
+  padding: 0 var(--sp-3);
+  background: var(--separator-soft);
+  color: var(--text);
+  border: none;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s;
+  white-space: nowrap;
+}
+
+.prof-edit-btn:hover {
+  background: var(--separator);
+}
+
+.prof-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.prof-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+}
+
+.prof-label {
+  font-size: var(--fs-sm);
+  color: var(--text-tertiary);
+  font-weight: var(--fw-semibold);
+  min-width: 130px;
+  flex-shrink: 0;
+}
+
+.prof-value {
+  font-size: var(--fs-md);
+  color: var(--text);
+  flex: 1;
+  word-break: break-word;
+}
+
+.prof-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+/* === Код приглашения === */
+.invite-card {
+  text-align: center;
+}
+
+.invite-code {
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 28px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 4px;
+  color: var(--blue);
+  background: var(--blue-soft);
+  padding: var(--sp-4);
+  border-radius: var(--r-md);
+  margin: var(--sp-3) 0;
+  user-select: all;
+}
+
+.invite-hint {
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: var(--sp-4);
+}
+
+.invite-actions {
+  display: flex;
+  gap: var(--sp-2);
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.invite-actions .prof-action-btn {
+  flex: 1;
+  max-width: 200px;
+}
+
+/* === Команда === */
+.team-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.team-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.team-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--separator-soft);
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-bold);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.team-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.team-name {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.team-nick {
+  color: var(--text-tertiary);
+  font-weight: var(--fw-regular);
+}
+
+.team-role {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+/* === Действия === */
+.prof-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-6);
+}
+
+.prof-action-btn {
+  height: 48px;
+  padding: 0 var(--sp-5);
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--separator);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.12s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  width: 100%;
+}
+
+.prof-action-btn:hover {
+  background: var(--separator-soft);
+}
+
+.prof-action-btn.danger {
+  color: var(--red);
+  border-color: rgba(255, 59, 48, 0.3);
+}
+
+.prof-action-btn.danger:hover {
+  background: var(--red-soft);
+}
+
+@media (max-width: 480px) {
+  .prof-avatar {
+    width: 52px;
+    height: 52px;
+    font-size: 22px;
+  }
+  .prof-name {
+    font-size: var(--fs-lg);
+  }
+  .prof-label {
+    min-width: 100px;
+  }
+  .invite-code {
+    font-size: 22px;
+    letter-spacing: 3px;
+  }
+}
