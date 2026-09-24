@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import axios from 'axios'
+import { api } from './api'
+import { useAuth } from './AuthContext'
+import AuthScreen from './AuthScreen'
 import './App.css'
 
 const API = 'http://localhost:8000/api'
@@ -247,6 +249,9 @@ function parseApiError(err: any): {
 
 // ============ ГЛАВНЫЙ КОМПОНЕНТ ============
 function App() {
+  const { isAuthenticated, loading, user, farm, logout } = useAuth()
+
+  // === ВСЕ ХУКИ — БЕЗ УСЛОВИЙ, В НАЧАЛЕ ===
   const [tab, setTab] = useState<Tab>('dashboard')
   const [drawerOpen, setDrawerOpen] = useState(false)
 
@@ -261,13 +266,14 @@ function App() {
   const [membershipGroupId, setMembershipGroupId] = useState<number | null>(null)
 
   const loadAll = useCallback(async () => {
+    if (!isAuthenticated) return
     try {
       const [a, g, v, vac, d] = await Promise.all([
-        axios.get<Animal[]>(`${API}/animals`),
-        axios.get<Group[]>(`${API}/groups`),
-        axios.get<Vaccine[]>(`${API}/vaccines`),
-        axios.get<Vaccination[]>(`${API}/vaccinations`),
-        axios.get<Dashboard>(`${API}/dashboard`),
+        api.get<Animal[]>(`${API}/animals`),
+        api.get<Group[]>(`${API}/groups`),
+        api.get<Vaccine[]>(`${API}/vaccines`),
+        api.get<Vaccination[]>(`${API}/vaccinations`),
+        api.get<Dashboard>(`${API}/dashboard`),
       ])
       setAnimals(a.data)
       setGroups(g.data)
@@ -277,7 +283,7 @@ function App() {
     } catch (err) {
       console.error('Ошибка загрузки:', err)
     }
-  }, [])
+  }, [isAuthenticated])
 
   useEffect(() => {
     loadAll()
@@ -310,6 +316,25 @@ function App() {
     setTab(t)
     setDrawerOpen(false)
   }
+
+  // === EARLY RETURNS — ПОСЛЕ ВСЕХ ХУКОВ ===
+
+  if (loading) {
+    return (
+      <div className="auth-layout">
+        <div className="auth-card" style={{ textAlign: 'center' }}>
+          <div className="auth-logo">🐄</div>
+          <p style={{ color: 'var(--text-secondary)' }}>Загрузка…</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!isAuthenticated) {
+    return <AuthScreen />
+  }
+
+  // === ОСНОВНОЙ RENDER ===
 
   return (
     <div className="layout">
@@ -373,22 +398,23 @@ function App() {
           </button>
         </nav>
 
-        <div className="drawer-footer">
-          <div className="drawer-footer-title">Экспорт данных</div>
-          <a
-            className="drawer-export"
-            href={`${API}/export/animals.csv`}
-            download
+        <div className="drawer-user">
+          <div className="drawer-user-avatar">
+            {user?.full_name?.[0]?.toUpperCase() || '?'}
+          </div>
+          <div className="drawer-user-info">
+            <div className="drawer-user-name">
+              {user?.nickname || user?.full_name || 'Пользователь'}
+            </div>
+            <div className="drawer-user-farm">{farm?.name || ''}</div>
+          </div>
+          <button
+            className="drawer-user-logout"
+            onClick={logout}
+            title="Выйти"
           >
-            📥 Поголовье CSV
-          </a>
-          <a
-            className="drawer-export"
-            href={`${API}/export/vaccinations.csv`}
-            download
-          >
-            📥 Вакцинации CSV
-          </a>
+            🚪
+          </button>
         </div>
       </aside>
 
@@ -533,6 +559,1661 @@ function VaccinationTab({
   )
 }
 
+// ============ ДАШБОРД ============
+function DashboardTab({
+  dashboard,
+  onReload,
+}: {
+  dashboard: Dashboard | null
+  onReload: () => void
+}) {
+  const [full, setFull] = useState<DashboardFull | null>(null)
+  const [upcoming, setUpcoming] = useState<
+    (Vaccination & { animal?: Animal; vaccine?: Vaccine })[]
+  >([])
+  const [recentEvents, setRecentEvents] = useState<
+    (AnimalEvent & { animal?: Animal })[]
+  >([])
+  const [loading, setLoading] = useState(true)
+
+  const loadDashboard = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [fullRes, vacRes, anRes, vcRes, evRes] = await Promise.all([
+        api.get<DashboardFull>(`${API}/dashboard/full`),
+        api.get<Vaccination[]>(`${API}/vaccinations?is_done=false`),
+        api.get<Animal[]>(`${API}/animals`),
+        api.get<Vaccine[]>(`${API}/vaccines`),
+        api.get<AnimalEvent[]>(`${API}/events`),
+      ])
+
+      setFull(fullRes.data)
+
+      const anMap: Record<number, Animal> = {}
+      anRes.data.forEach((a) => (anMap[a.id] = a))
+      const vcMap: Record<number, Vaccine> = {}
+      vcRes.data.forEach((v) => (vcMap[v.id] = v))
+
+      setUpcoming(
+        vacRes.data
+          .map((v) => ({
+            ...v,
+            animal: anMap[v.animal_id],
+            vaccine: vcMap[v.vaccine_id],
+          }))
+          .sort((a, b) => a.planned_date.localeCompare(b.planned_date))
+          .slice(0, 7)
+      )
+
+      setRecentEvents(
+        evRes.data
+          .slice(0, 5)
+          .map((ev) => ({ ...ev, animal: anMap[ev.animal_id] }))
+      )
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadDashboard()
+  }, [loadDashboard, dashboard])
+
+  if (loading && !full) {
+    return <p className="empty">Загрузка…</p>
+  }
+
+  return (
+    <div>
+      <h2 className="section-title">💉 Вакцинация</h2>
+      <div className="stats-row">
+        <div className="stat-card">
+          <div className="stat-value blue">
+            {full?.vaccination.active ?? 0}
+          </div>
+          <div className="stat-label">Активных голов</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-value orange">
+            {full?.vaccination.upcoming_7 ?? 0}
+          </div>
+          <div className="stat-label">На неделе</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-value red">
+            {full?.vaccination.overdue ?? 0}
+          </div>
+          <div className="stat-label">Просрочено</div>
+        </div>
+      </div>
+
+      <h2 className="section-title">🐄 Поголовье</h2>
+      <div className="dash-grid-4">
+        <div className="dash-mini">
+          <div className="dash-mini-icon">🐄</div>
+          <div className="dash-mini-value">{full?.animals.cows ?? 0}</div>
+          <div className="dash-mini-label">Коровы</div>
+        </div>
+        <div className="dash-mini">
+          <div className="dash-mini-icon">🐂</div>
+          <div className="dash-mini-value">{full?.animals.bulls ?? 0}</div>
+          <div className="dash-mini-label">Быки</div>
+        </div>
+        <div className="dash-mini">
+          <div className="dash-mini-icon">🐮</div>
+          <div className="dash-mini-value">{full?.animals.young ?? 0}</div>
+          <div className="dash-mini-label">Молодняк</div>
+        </div>
+        <div className="dash-mini">
+          <div className="dash-mini-icon">👥</div>
+          <div className="dash-mini-value">{full?.animals.groups ?? 0}</div>
+          <div className="dash-mini-label">Групп</div>
+        </div>
+      </div>
+
+      <h2 className="section-title">💰 Финансы за 30 дней</h2>
+      <div className="dash-fin-row">
+        <div className="dash-fin-card income">
+          <div className="dash-fin-label">Доходы</div>
+          <div className="dash-fin-value">
+            +{formatMoney(full?.finance_30d.income ?? 0)}
+          </div>
+        </div>
+        <div className="dash-fin-card expense">
+          <div className="dash-fin-label">Расходы</div>
+          <div className="dash-fin-value">
+            −{formatMoney(full?.finance_30d.expense ?? 0)}
+          </div>
+        </div>
+        <div
+          className={`dash-fin-card profit ${
+            (full?.finance_30d.profit ?? 0) >= 0 ? 'positive' : 'negative'
+          }`}
+        >
+          <div className="dash-fin-label">Прибыль</div>
+          <div className="dash-fin-value">
+            {formatMoney(full?.finance_30d.profit ?? 0)}
+          </div>
+        </div>
+      </div>
+
+      <h2 className="section-title">📅 Ближайшие вакцинации</h2>
+
+      {upcoming.length === 0 ? (
+        <p className="empty">Нет предстоящих вакцинаций</p>
+      ) : (
+        <div className="list">
+          {upcoming.map((v) => {
+            const days = daysUntil(v.planned_date)
+            const urgent = days < 0
+            const soon = days >= 0 && days <= 3
+            return (
+              <div
+                key={v.id}
+                className={`card ${
+                  urgent ? 'card-urgent' : soon ? 'card-soon' : ''
+                }`}
+              >
+                <div className="card-title">
+                  <span className="tag">{v.animal?.tag_number || '—'}</span>
+                  <span
+                    className={`badge ${
+                      urgent ? 'badge-red' : soon ? 'badge-orange' : ''
+                    }`}
+                  >
+                    {urgent
+                      ? `просрочено на ${Math.abs(days)} дн.`
+                      : days === 0
+                      ? 'сегодня'
+                      : days === 1
+                      ? 'завтра'
+                      : `через ${days} дн.`}
+                  </span>
+                </div>
+                <div className="card-meta">
+                  <span>💉 {v.vaccine?.disease || 'вакцинация'}</span>
+                  <span>📅 {formatDate(v.planned_date)}</span>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      <h2 className="section-title">📝 Последние события</h2>
+
+      {recentEvents.length === 0 ? (
+        <p className="empty">Событий пока нет</p>
+      ) : (
+        <div className="events-list">
+          {recentEvents.map((ev) => (
+            <div key={ev.id} className="dash-event-row">
+              <div className="dash-event-icon">
+                {EVENT_LABELS[ev.event_type]?.split(' ')[0] || '📝'}
+              </div>
+              <div className="dash-event-info">
+                <div className="dash-event-title">
+                  {EVENT_LABELS[ev.event_type] || ev.event_type}
+                  {ev.animal && (
+                    <span className="dash-event-tag">
+                      {' '}
+                      · 🐄 {ev.animal.tag_number}
+                    </span>
+                  )}
+                </div>
+                <div className="dash-event-meta">
+                  📅 {formatDate(ev.event_date)}
+                  {ev.description && ` · ${ev.description}`}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button className="reload-btn" onClick={loadDashboard}>
+        🔄 Обновить
+      </button>
+    </div>
+  )
+}
+
+// ============ ПОГОЛОВЬЕ ============
+function AnimalsTab({
+  animals,
+  groups,
+  onReload,
+  onSelect,
+  showAddForm,
+  setShowAddForm,
+}: {
+  animals: Animal[]
+  groups: Group[]
+  onReload: () => void
+  onSelect: (a: Animal) => void
+  showAddForm: boolean
+  setShowAddForm: (v: boolean) => void
+}) {
+  const [search, setSearch] = useState('')
+  const [groupFilter, setGroupFilter] = useState<number | 'all'>('all')
+  const [statusFilter, setStatusFilter] = useState<string>('active')
+
+  const filtered = useMemo(() => {
+    let list = animals
+    if (statusFilter !== 'all') {
+      list = list.filter((a) => a.status === statusFilter)
+    }
+    if (groupFilter !== 'all') {
+      list = list.filter((a) => a.group_id === groupFilter)
+    }
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      list = list.filter(
+        (a) =>
+          a.tag_number.toLowerCase().includes(q) ||
+          (a.name?.toLowerCase() || '').includes(q) ||
+          (a.chip_number?.toLowerCase() || '').includes(q)
+      )
+    }
+    return list
+  }, [animals, search, groupFilter, statusFilter])
+
+  return (
+    <div>
+      <div className="toolbar">
+        <input
+          className="search-input"
+          placeholder="🔍 Бирка, кличка, чип"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <button
+          className="add-btn"
+          onClick={() => setShowAddForm(!showAddForm)}
+        >
+          {showAddForm ? '✕ Отмена' : '+ Добавить'}
+        </button>
+      </div>
+
+      <div className="filter-row">
+        {['active', 'all', 'sold', 'dead'].map((s) => (
+          <button
+            key={s}
+            className={statusFilter === s ? 'chip active' : 'chip'}
+            onClick={() => setStatusFilter(s)}
+          >
+            {s === 'active'
+              ? 'Активные'
+              : s === 'all'
+              ? 'Все'
+              : s === 'sold'
+              ? 'Проданные'
+              : 'Падёж'}
+          </button>
+        ))}
+      </div>
+
+      {groups.length > 0 && (
+        <div className="filter-row">
+          <button
+            className={groupFilter === 'all' ? 'chip active' : 'chip'}
+            onClick={() => setGroupFilter('all')}
+          >
+            Все группы
+          </button>
+          {groups.map((g) => {
+            const count = animals.filter((a) => a.group_id === g.id).length
+            return (
+              <button
+                key={g.id}
+                className={groupFilter === g.id ? 'chip active' : 'chip'}
+                onClick={() => setGroupFilter(g.id)}
+              >
+                {g.name} ({count})
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {showAddForm && (
+        <AddAnimalForm
+          groups={groups}
+          onCreated={() => {
+            setShowAddForm(false)
+            onReload()
+          }}
+        />
+      )}
+
+      {filtered.length === 0 && <p className="empty">Животные не найдены</p>}
+
+      <div className="list">
+        {filtered.map((a) => (
+          <div
+            key={a.id}
+            className="card clickable"
+            onClick={() => onSelect(a)}
+          >
+            <div className="card-title">
+              <span className="tag">{a.tag_number}</span>
+              <span className="sex">{a.sex === 'female' ? '♀' : '♂'}</span>
+            </div>
+            <div className="card-meta">
+              {a.name && <span>🏷 {a.name}</span>}
+              <span>🐄 {a.breed}</span>
+              <span>🎂 {animalAge(a.birth_date)}</span>
+              {a.group_id && (
+                <span>
+                  👥 {groups.find((g) => g.id === a.group_id)?.name || '—'}
+                </span>
+              )}
+              {a.status !== 'active' && (
+                <span className="status-badge">
+                  {STATUS_LABELS[a.status] || a.status}
+                </span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ============ ГРУППЫ ============
+function GroupsTab({
+  groups,
+  animals,
+  onReload,
+  onManage,
+}: {
+  groups: Group[]
+  animals: Animal[]
+  onReload: () => void
+  onManage: (g: Group) => void
+}) {
+  const [showForm, setShowForm] = useState(false)
+  const [editGroup, setEditGroup] = useState<Group | null>(null)
+  const [form, setForm] = useState({ name: '', description: '' })
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [generalError, setGeneralError] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const openCreate = () => {
+    setEditGroup(null)
+    setForm({ name: '', description: '' })
+    setFieldErrors({})
+    setGeneralError('')
+    setShowForm(true)
+  }
+
+  const openEdit = (g: Group) => {
+    setEditGroup(g)
+    setForm({ name: g.name, description: g.description || '' })
+    setFieldErrors({})
+    setGeneralError('')
+    setShowForm(true)
+  }
+
+  const closeForm = () => {
+    setShowForm(false)
+    setEditGroup(null)
+  }
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setFieldErrors({})
+    setGeneralError('')
+
+    if (!form.name.trim()) {
+      setFieldErrors({ name: 'Укажите название группы' })
+      setGeneralError('Исправьте выделенные поля')
+      return
+    }
+
+    setSaving(true)
+    try {
+      const payload = {
+        name: form.name.trim(),
+        description: form.description.trim() || null,
+      }
+      if (editGroup) {
+        await api.patch(`${API}/groups/${editGroup.id}`, payload)
+      } else {
+        await api.post(`${API}/groups`, payload)
+      }
+      closeForm()
+      onReload()
+    } catch (err) {
+      const p = parseApiError(err)
+      setFieldErrors(p.fields)
+      setGeneralError(p.general)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const remove = async (g: Group) => {
+    const count = animals.filter((a) => a.group_id === g.id).length
+    if (
+      !confirm(
+        `Удалить группу «${g.name}»?${
+          count ? `\n${count} животных будут без группы.` : ''
+        }`
+      )
+    )
+      return
+    try {
+      await api.delete(`${API}/groups/${g.id}`)
+      onReload()
+    } catch (err) {
+      alert('Не удалось удалить')
+    }
+  }
+
+  return (
+    <div>
+      <div className="toolbar">
+        <button className="add-btn" onClick={openCreate}>
+          + Создать группу
+        </button>
+      </div>
+
+      {showForm && (
+        <form className="form-card" onSubmit={submit} noValidate>
+          <h3>{editGroup ? 'Редактировать группу' : 'Новая группа'}</h3>
+
+          {generalError && (
+            <div className="form-error">
+              <span className="error-icon">⚠️</span>
+              <span>{generalError}</span>
+            </div>
+          )}
+
+          <div className="form-field">
+            <label>
+              Название <span className="req">*</span>
+            </label>
+            <input
+              className={fieldErrors.name ? 'has-error' : ''}
+              value={form.name}
+              onChange={(e) => {
+                setForm({ ...form, name: e.target.value })
+                if (fieldErrors.name) {
+                  const n = { ...fieldErrors }
+                  delete n.name
+                  setFieldErrors(n)
+                }
+              }}
+              placeholder="Гурт №1"
+            />
+            {fieldErrors.name && (
+              <div className="field-error">{fieldErrors.name}</div>
+            )}
+          </div>
+
+          <div className="form-field">
+            <label>Описание</label>
+            <input
+              value={form.description}
+              onChange={(e) =>
+                setForm({ ...form, description: e.target.value })
+              }
+              placeholder="Стельные коровы"
+            />
+          </div>
+
+          <div className="complete-actions">
+            <button
+              type="button"
+              className="btn-cancel"
+              onClick={closeForm}
+              disabled={saving}
+            >
+              Отмена
+            </button>
+            <button type="submit" className="btn-save" disabled={saving}>
+              {saving ? '⏳…' : editGroup ? '💾 Сохранить' : '💾 Создать'}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {groups.length === 0 && !showForm && (
+        <p className="empty">Групп пока нет — создайте первую</p>
+      )}
+
+      <div className="list">
+        {groups.map((g) => {
+          const count = animals.filter(
+            (a) => a.group_id === g.id && a.status === 'active'
+          ).length
+          return (
+            <div key={g.id} className="card group-card">
+              <div className="group-card-main">
+                <div className="group-name">
+                  👥 {g.name}
+                  <span className="group-count">{count}</span>
+                </div>
+                {g.description && (
+                  <div className="group-desc">{g.description}</div>
+                )}
+              </div>
+              <div className="group-actions">
+                <button
+                  className="icon-btn primary"
+                  onClick={() => onManage(g)}
+                  title="Состав гурта"
+                >
+                  🐄
+                </button>
+                <button
+                  className="icon-btn"
+                  onClick={() => openEdit(g)}
+                  title="Редактировать"
+                >
+                  ✏️
+                </button>
+                <button
+                  className="icon-btn danger"
+                  onClick={() => remove(g)}
+                  title="Удалить"
+                >
+                  🗑
+                </button>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ============ ФОРМА ЖИВОТНОГО ============
+function AddAnimalForm({
+  groups,
+  onCreated,
+}: {
+  groups: Group[]
+  onCreated: () => void
+}) {
+  const [form, setForm] = useState({
+    tag_number: '',
+    name: '',
+    sex: 'female',
+    birth_date: '',
+    breed: 'Калмыцкая',
+    color: '',
+    group_id: '',
+  })
+
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [generalError, setGeneralError] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const validate = (): Record<string, string> => {
+    const errs: Record<string, string> = {}
+    if (!form.tag_number.trim()) {
+      errs.tag_number = 'Укажите номер бирки'
+    } else if (form.tag_number.trim().length < 3) {
+      errs.tag_number = 'Минимум 3 символа'
+    } else if (form.tag_number.trim().length > 50) {
+      errs.tag_number = 'Максимум 50 символов'
+    }
+    if (form.birth_date) {
+      const d = new Date(form.birth_date)
+      const today = new Date()
+      today.setHours(23, 59, 59, 999)
+      if (d > today) errs.birth_date = 'Дата рождения не может быть в будущем'
+    }
+    return errs
+  }
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setGeneralError('')
+    setFieldErrors({})
+    const clientErrs = validate()
+    if (Object.keys(clientErrs).length > 0) {
+      setFieldErrors(clientErrs)
+      setGeneralError('Исправьте выделенные поля')
+      return
+    }
+    setSaving(true)
+    try {
+      await api.post(`${API}/animals`, {
+        tag_number: form.tag_number.trim(),
+        name: form.name.trim() || null,
+        sex: form.sex,
+        birth_date: form.birth_date || null,
+        breed: form.breed.trim() || 'Калмыцкая',
+        color: form.color.trim() || null,
+        group_id: form.group_id ? Number(form.group_id) : null,
+      })
+      onCreated()
+    } catch (err) {
+      const parsed = parseApiError(err)
+      setFieldErrors(parsed.fields)
+      setGeneralError(parsed.general)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form className="form-card" onSubmit={submit} noValidate>
+      <h3>Новое животное</h3>
+
+      {generalError && (
+        <div className="form-error">
+          <span className="error-icon">⚠️</span>
+          <span>{generalError}</span>
+        </div>
+      )}
+
+      <div className="form-field">
+        <label>
+          Номер бирки <span className="req">*</span>
+        </label>
+        <input
+          className={fieldErrors.tag_number ? 'has-error' : ''}
+          value={form.tag_number}
+          onChange={(e) => setForm({ ...form, tag_number: e.target.value })}
+          placeholder="RU-001-2026"
+        />
+        {fieldErrors.tag_number && (
+          <div className="field-error">{fieldErrors.tag_number}</div>
+        )}
+      </div>
+
+      <div className="form-row">
+        <div className="form-field">
+          <label>Кличка</label>
+          <input
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+          />
+        </div>
+        <div className="form-field">
+          <label>
+            Пол <span className="req">*</span>
+          </label>
+          <select
+            value={form.sex}
+            onChange={(e) => setForm({ ...form, sex: e.target.value })}
+          >
+            <option value="female">Корова (♀)</option>
+            <option value="male">Бык (♂)</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="form-row">
+        <div className="form-field">
+          <label>Дата рождения</label>
+          <input
+            type="date"
+            className={fieldErrors.birth_date ? 'has-error' : ''}
+            value={form.birth_date}
+            onChange={(e) => setForm({ ...form, birth_date: e.target.value })}
+          />
+          {fieldErrors.birth_date && (
+            <div className="field-error">{fieldErrors.birth_date}</div>
+          )}
+        </div>
+        <div className="form-field">
+          <label>Масть</label>
+          <input
+            value={form.color}
+            onChange={(e) => setForm({ ...form, color: e.target.value })}
+          />
+        </div>
+      </div>
+
+      <div className="form-row">
+        <div className="form-field">
+          <label>Порода</label>
+          <input
+            value={form.breed}
+            onChange={(e) => setForm({ ...form, breed: e.target.value })}
+          />
+        </div>
+        <div className="form-field">
+          <label>Группа</label>
+          <select
+            value={form.group_id}
+            onChange={(e) => setForm({ ...form, group_id: e.target.value })}
+          >
+            <option value="">— без группы —</option>
+            {groups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <button type="submit" className="submit-btn" disabled={saving}>
+        {saving ? '⏳ Сохранение…' : '💾 Сохранить'}
+      </button>
+    </form>
+  )
+}
+
+// ============ КАЛЕНДАРЬ ============
+function CalendarTab({
+  vaccinations,
+  animalsById,
+  vaccinesById,
+  onReload,
+}: {
+  vaccinations: Vaccination[]
+  animalsById: Record<number, Animal>
+  vaccinesById: Record<number, Vaccine>
+  onReload: () => void
+}) {
+  const [filter, setFilter] = useState<'upcoming' | 'done' | 'all'>('upcoming')
+
+  const filtered = useMemo(() => {
+    let list = [...vaccinations]
+    if (filter === 'upcoming') list = list.filter((v) => !v.is_done)
+    if (filter === 'done') list = list.filter((v) => v.is_done)
+    return list.sort((a, b) => a.planned_date.localeCompare(b.planned_date))
+  }, [vaccinations, filter])
+
+  const complete = async (vac: Vaccination) => {
+    const actual = prompt(
+      'Дата выполнения (YYYY-MM-DD):',
+      new Date().toISOString().slice(0, 10)
+    )
+    if (!actual) return
+    const vet = prompt('ФИО ветеринара (необязательно):') || null
+    try {
+      await api.post(`${API}/vaccinations/${vac.id}/complete`, {
+        actual_date: actual,
+        vet_name: vet,
+      })
+      onReload()
+    } catch (err) {
+      alert('Ошибка')
+    }
+  }
+
+  const remove = async (vac: Vaccination) => {
+    if (!confirm('Удалить запись?')) return
+    try {
+      await api.delete(`${API}/vaccinations/${vac.id}`)
+      onReload()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  return (
+    <div>
+      <div className="filter-row">
+        <button
+          className={filter === 'upcoming' ? 'chip active' : 'chip'}
+          onClick={() => setFilter('upcoming')}
+        >
+          Предстоящие
+        </button>
+        <button
+          className={filter === 'done' ? 'chip active' : 'chip'}
+          onClick={() => setFilter('done')}
+        >
+          Выполненные
+        </button>
+        <button
+          className={filter === 'all' ? 'chip active' : 'chip'}
+          onClick={() => setFilter('all')}
+        >
+          Все
+        </button>
+      </div>
+
+      {filtered.length === 0 && <p className="empty">Нет записей</p>}
+
+      <div className="list">
+        {filtered.map((v) => {
+          const animal = animalsById[v.animal_id]
+          const vaccine = vaccinesById[v.vaccine_id]
+          const days = daysUntil(v.planned_date)
+          const overdue = !v.is_done && days < 0
+          const soon = !v.is_done && days >= 0 && days <= 3
+          return (
+            <div
+              key={v.id}
+              className={`card ${
+                overdue ? 'card-urgent' : soon ? 'card-soon' : ''
+              } ${v.is_done ? 'card-done' : ''}`}
+            >
+              <div className="card-title">
+                <span className="tag">
+                  {animal?.tag_number || `#${v.animal_id}`}
+                </span>
+                {v.is_done ? (
+                  <span className="badge badge-green">✅ выполнено</span>
+                ) : (
+                  <span
+                    className={`badge ${
+                      overdue ? 'badge-red' : soon ? 'badge-orange' : ''
+                    }`}
+                  >
+                    {overdue
+                      ? `просрочено на ${Math.abs(days)} дн.`
+                      : days === 0
+                      ? 'сегодня'
+                      : days === 1
+                      ? 'завтра'
+                      : `через ${days} дн.`}
+                  </span>
+                )}
+              </div>
+              <div className="card-meta">
+                <span>💉 {vaccine?.disease || 'вакцинация'}</span>
+                <span>📅 план: {formatDate(v.planned_date)}</span>
+                {v.actual_date && (
+                  <span>✅ факт: {formatDate(v.actual_date)}</span>
+                )}
+                {v.vet_name && <span>👨‍⚕️ {v.vet_name}</span>}
+              </div>
+              {!v.is_done ? (
+                <button className="complete-btn" onClick={() => complete(v)}>
+                  ✅ Отметить выполненной
+                </button>
+              ) : (
+                <button className="delete-mini-btn" onClick={() => remove(v)}>
+                  🗑 Удалить
+                </button>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ============ ГУРТОВАЯ ВАКЦИНАЦИЯ ============
+function GroupVaccinationTab({
+  groups,
+  animals,
+  onReload,
+}: {
+  groups: Group[]
+  animals: Animal[]
+  onReload: () => void
+}) {
+  const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null)
+  const [upcoming, setUpcoming] = useState<GroupUpcoming[]>([])
+  const [loading, setLoading] = useState(false)
+  const [expandedDisease, setExpandedDisease] = useState<string | null>(null)
+  const [actualDate, setActualDate] = useState(
+    new Date().toISOString().slice(0, 10)
+  )
+  const [vetName, setVetName] = useState('')
+  const [doseUsed, setDoseUsed] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+
+  const loadUpcoming = useCallback(async (gid: number) => {
+    setLoading(true)
+    setUpcoming([])
+    try {
+      const { data } = await api.get<GroupUpcoming[]>(
+        `${API}/groups/${gid}/upcoming-vaccinations`
+      )
+      setUpcoming(data)
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (selectedGroupId) {
+      loadUpcoming(selectedGroupId)
+    }
+  }, [selectedGroupId, loadUpcoming])
+
+  const selectedGroup = groups.find((g) => g.id === selectedGroupId)
+  const groupAnimals = animals.filter(
+    (a) => a.group_id === selectedGroupId && a.status === 'active'
+  )
+
+  const submitMass = async (disease: string) => {
+    if (!selectedGroupId) return
+    if (!actualDate) {
+      setError('Укажите дату выполнения')
+      return
+    }
+    setSaving(true)
+    setError('')
+    setMessage('')
+
+    try {
+      const { data } = await api.post(
+        `${API}/groups/${selectedGroupId}/complete-vaccinations`,
+        {
+          disease,
+          actual_date: actualDate,
+          vet_name: vetName.trim() || null,
+          dose_used: doseUsed.trim() || null,
+        }
+      )
+      setMessage(
+        `✅ Отмечено ${data.updated} вакцинаций у ${data.animals_count} животных`
+      )
+      setExpandedDisease(null)
+      setVetName('')
+      setDoseUsed('')
+      loadUpcoming(selectedGroupId)
+      onReload()
+      setTimeout(() => setMessage(''), 5000)
+    } catch (err) {
+      const p = parseApiError(err)
+      setError(p.general)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div>
+      <div className="gv-section">
+        <div className="gv-section-title">1. Выберите гурт</div>
+        {groups.length === 0 ? (
+          <p className="empty">
+            Сначала создайте группы на вкладке «Группы»
+          </p>
+        ) : (
+          <div className="filter-row">
+            {groups.map((g) => {
+              const count = animals.filter(
+                (a) => a.group_id === g.id && a.status === 'active'
+              ).length
+              return (
+                <button
+                  key={g.id}
+                  className={`chip ${
+                    selectedGroupId === g.id ? 'active' : ''
+                  }`}
+                  onClick={() => {
+                    setSelectedGroupId(g.id)
+                    setExpandedDisease(null)
+                    setMessage('')
+                    setError('')
+                  }}
+                >
+                  {g.name} ({count})
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {selectedGroupId && (
+        <div className="gv-section">
+          <div className="gv-section-title">
+            2. Предстоящие вакцинации для «{selectedGroup?.name}»
+          </div>
+
+          {loading && <p className="empty-small">Загрузка…</p>}
+
+          {!loading && upcoming.length === 0 && (
+            <p className="empty">
+              Нет предстоящих вакцинаций. Сгенерируйте календари на вкладке
+              «Поголовье».
+            </p>
+          )}
+
+          {message && (
+            <div className="gv-success">
+              <span>{message}</span>
+            </div>
+          )}
+
+          {error && (
+            <div className="form-error">
+              <span className="error-icon">⚠️</span>
+              <span>{error}</span>
+            </div>
+          )}
+
+          <div className="list">
+            {upcoming.map((u) => {
+              const earliestDays = daysUntil(u.earliest_date)
+              const overdue = u.overdue_count > 0
+              const soon = !overdue && earliestDays <= 3
+              const isExpanded = expandedDisease === u.disease
+
+              return (
+                <div
+                  key={u.disease}
+                  className={`card gv-card ${
+                    overdue ? 'card-urgent' : soon ? 'card-soon' : ''
+                  }`}
+                >
+                  <div className="gv-card-header">
+                    <div>
+                      <div className="gv-card-title">💉 {u.disease}</div>
+                      <div className="gv-card-meta">
+                        <span>
+                          <b>{u.count}</b> голов
+                        </span>
+                        <span>📅 с {formatDate(u.earliest_date)}</span>
+                        {u.earliest_date !== u.latest_date && (
+                          <span>по {formatDate(u.latest_date)}</span>
+                        )}
+                        {overdue && (
+                          <span className="gv-overdue">
+                            ⚠️ просрочено у {u.overdue_count}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {!isExpanded && (
+                    <button
+                      className="gv-mass-btn"
+                      onClick={() => {
+                        setExpandedDisease(u.disease)
+                        setActualDate(new Date().toISOString().slice(0, 10))
+                        setVetName('')
+                        setDoseUsed('')
+                        setError('')
+                        setMessage('')
+                      }}
+                    >
+                      ✅ Отметить всем {u.count} головам
+                    </button>
+                  )}
+
+                  {isExpanded && (
+                    <div className="gv-form">
+                      <div className="gv-form-title">
+                        Массовая отметка: {u.disease}
+                      </div>
+
+                      <div className="form-row">
+                        <div className="form-field">
+                          <label>
+                            Дата выполнения <span className="req">*</span>
+                          </label>
+                          <input
+                            type="date"
+                            value={actualDate}
+                            onChange={(e) => setActualDate(e.target.value)}
+                          />
+                        </div>
+
+                        <div className="form-field">
+                          <label>Ветеринар</label>
+                          <input
+                            value={vetName}
+                            onChange={(e) => setVetName(e.target.value)}
+                            placeholder="ФИО"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="form-field">
+                        <label>Доза / препарат</label>
+                        <input
+                          value={doseUsed}
+                          onChange={(e) => setDoseUsed(e.target.value)}
+                          placeholder="2 мл, серия 12345"
+                        />
+                      </div>
+
+                      <div className="gv-form-summary">
+                        Будет отмечено <b>{u.count}</b> вакцинаций у{' '}
+                        <b>{u.count}</b> голов гурта «{selectedGroup?.name}»
+                      </div>
+
+                      <div className="complete-actions">
+                        <button
+                          className="btn-cancel"
+                          onClick={() => setExpandedDisease(null)}
+                          disabled={saving}
+                        >
+                          Отмена
+                        </button>
+                        <button
+                          className="btn-save"
+                          onClick={() => submitMass(u.disease)}
+                          disabled={saving}
+                        >
+                          {saving
+                            ? '⏳ Сохраняю…'
+                            : `✅ Отметить всем (${u.count})`}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {!selectedGroupId && groups.length > 0 && (
+        <div className="gv-hint">
+          <div className="gv-hint-icon">💡</div>
+          <div>
+            <b>Как это работает:</b>
+            <ol>
+              <li>Выберите гурт сверху</li>
+              <li>Увидите список предстоящих вакцинаций для всех животных</li>
+              <li>
+                Нажмите «Отметить всем» — все вакцинации одного типа будут
+                отмечены за раз
+              </li>
+            </ol>
+            <p>
+              Всего в выбранном гурте:{' '}
+              <b>{groupAnimals.length} активных голов</b>
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ============ МОДАЛКА: СОСТАВ ГУРТА ============
+function GroupMembershipModal({
+  group,
+  animals,
+  onClose,
+  onChanged,
+}: {
+  group: Group
+  animals: Animal[]
+  onClose: () => void
+  onChanged: () => void
+}) {
+  const [search, setSearch] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const [selectedOut, setSelectedOut] = useState<Set<number>>(new Set())
+  const [selectedIn, setSelectedIn] = useState<Set<number>>(new Set())
+
+  const [draggingId, setDraggingId] = useState<number | null>(null)
+  const [dragOverCol, setDragOverCol] = useState<'in' | 'out' | null>(null)
+
+  const active = useMemo(
+    () => animals.filter((a) => a.status === 'active'),
+    [animals]
+  )
+
+  const inGroup = useMemo(
+    () => active.filter((a) => a.group_id === group.id),
+    [active, group.id]
+  )
+
+  const notInGroup = useMemo(
+    () =>
+      active
+        .filter((a) => a.group_id !== group.id)
+        .sort((a, b) => a.tag_number.localeCompare(b.tag_number)),
+    [active, group.id]
+  )
+
+  useEffect(() => {
+    setSelectedOut(new Set())
+    setSelectedIn(new Set())
+  }, [search])
+
+  const filterBySearch = (list: Animal[]) => {
+    if (!search.trim()) return list
+    const q = search.toLowerCase()
+    return list.filter(
+      (a) =>
+        a.tag_number.toLowerCase().includes(q) ||
+        (a.name?.toLowerCase() || '').includes(q) ||
+        (a.chip_number?.toLowerCase() || '').includes(q)
+    )
+  }
+
+  const filteredIn = filterBySearch(inGroup)
+  const filteredOut = filterBySearch(notInGroup)
+
+  const addOne = async (id: number) => {
+    setBusy(true)
+    setError('')
+    try {
+      await api.post(`${API}/groups/${group.id}/assign`, {
+        animal_ids: [id],
+        action: 'add',
+      })
+      setSelectedOut((prev) => {
+        const n = new Set(prev)
+        n.delete(id)
+        return n
+      })
+      onChanged()
+    } catch (err) {
+      const p = parseApiError(err)
+      setError(p.general)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeOne = async (id: number) => {
+    setBusy(true)
+    setError('')
+    try {
+      await api.post(`${API}/groups/${group.id}/assign`, {
+        animal_ids: [id],
+        action: 'remove',
+      })
+      setSelectedIn((prev) => {
+        const n = new Set(prev)
+        n.delete(id)
+        return n
+      })
+      onChanged()
+    } catch (err) {
+      const p = parseApiError(err)
+      setError(p.general)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const addSelected = async () => {
+    if (selectedOut.size === 0) return
+    setBusy(true)
+    setError('')
+    try {
+      await api.post(`${API}/groups/${group.id}/assign`, {
+        animal_ids: Array.from(selectedOut),
+        action: 'add',
+      })
+      setSelectedOut(new Set())
+      onChanged()
+    } catch (err) {
+      const p = parseApiError(err)
+      setError(p.general)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeSelected = async () => {
+    if (selectedIn.size === 0) return
+    setBusy(true)
+    setError('')
+    try {
+      await api.post(`${API}/groups/${group.id}/assign`, {
+        animal_ids: Array.from(selectedIn),
+        action: 'remove',
+      })
+      setSelectedIn(new Set())
+      onChanged()
+    } catch (err) {
+      const p = parseApiError(err)
+      setError(p.general)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const addAll = async () => {
+    if (filteredOut.length === 0) return
+    setBusy(true)
+    setError('')
+    try {
+      await api.post(`${API}/groups/${group.id}/assign`, {
+        animal_ids: filteredOut.map((a) => a.id),
+        action: 'add',
+      })
+      setSelectedOut(new Set())
+      onChanged()
+    } catch (err) {
+      const p = parseApiError(err)
+      setError(p.general)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeAll = async () => {
+    if (inGroup.length === 0) return
+    if (!confirm(`Убрать всех ${inGroup.length} животных из «${group.name}»?`))
+      return
+    setBusy(true)
+    setError('')
+    try {
+      await api.post(`${API}/groups/${group.id}/assign`, {
+        animal_ids: inGroup.map((a) => a.id),
+        action: 'remove',
+      })
+      setSelectedIn(new Set())
+      onChanged()
+    } catch (err) {
+      const p = parseApiError(err)
+      setError(p.general)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const toggleSelectOut = (id: number) => {
+    setSelectedOut((prev) => {
+      const n = new Set(prev)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+  }
+
+  const toggleSelectIn = (id: number) => {
+    setSelectedIn((prev) => {
+      const n = new Set(prev)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+  }
+
+  const selectAllOut = () =>
+    setSelectedOut(new Set(filteredOut.map((a) => a.id)))
+  const selectAllIn = () => setSelectedIn(new Set(filteredIn.map((a) => a.id)))
+  const clearSelectionOut = () => setSelectedOut(new Set())
+  const clearSelectionIn = () => setSelectedIn(new Set())
+
+  const handleDragStart = (id: number) => setDraggingId(id)
+  const handleDragEnd = () => {
+    setDraggingId(null)
+    setDragOverCol(null)
+  }
+
+  const handleDragOver = (col: 'in' | 'out') => (e: React.DragEvent) => {
+    e.preventDefault()
+    setDragOverCol(col)
+  }
+
+  const handleDragLeave = () => setDragOverCol(null)
+
+  const handleDrop = (col: 'in' | 'out') => async (e: React.DragEvent) => {
+    e.preventDefault()
+    setDragOverCol(null)
+    const id = draggingId
+    setDraggingId(null)
+    if (!id) return
+    const animal = active.find((a) => a.id === id)
+    if (!animal) return
+    if (col === 'in' && animal.group_id === group.id) return
+    if (col === 'out' && animal.group_id !== group.id) return
+    if (col === 'in') await addOne(id)
+    else await removeOne(id)
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2>👥 {group.name}</h2>
+          <button className="close-btn" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+
+        <div className="modal-body">
+          <div className="member-search-row">
+            <input
+              className="search-input"
+              placeholder="🔍 Бирка, кличка, чип"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+
+          {error && (
+            <div className="form-error">
+              <span className="error-icon">⚠️</span>
+              <span>{error}</span>
+            </div>
+          )}
+
+          <div className="member-hint">
+            💡 Перетаскивайте карточки между колонками или используйте чекбоксы
+            для массовых операций
+          </div>
+
+          <div className="member-columns">
+            <div
+              className={`member-col ${
+                dragOverCol === 'out' ? 'drag-over' : ''
+              }`}
+              onDragOver={handleDragOver('out')}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop('out')}
+            >
+              <div className="member-col-header">
+                <span>
+                  Доступные ({filteredOut.length}
+                  {search && ` из ${notInGroup.length}`})
+                </span>
+                <div className="member-col-actions">
+                  <button
+                    className="mini-add-btn"
+                    onClick={
+                      selectedOut.size === filteredOut.length &&
+                      filteredOut.length > 0
+                        ? clearSelectionOut
+                        : selectAllOut
+                    }
+                    disabled={filteredOut.length === 0}
+                  >
+                    {selectedOut.size === filteredOut.length &&
+                    filteredOut.length > 0
+                      ? '☐ Снять'
+                      : '☑ Все'}
+                  </button>
+                  {filteredOut.length > 0 && (
+                    <button
+                      className="mini-add-btn"
+                      onClick={addAll}
+                      disabled={busy}
+                    >
+                      ➕ Все
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {selectedOut.size > 0 && (
+                <div className="member-selected-bar">
+                  <span>
+                    <b>{selectedOut.size}</b> выбрано
+                  </span>
+                  <button
+                    className="btn-bulk-add"
+                    onClick={addSelected}
+                    disabled={busy}
+                  >
+                    ➕ Добавить
+                  </button>
+                </div>
+              )}
+
+              <div className="member-list">
+                {filteredOut.length === 0 && (
+                  <p className="member-empty">
+                    {search
+                      ? 'Ничего не найдено'
+                      : 'Все активные животные уже в этом гурте'}
+                  </p>
+                )}
+
+                {filteredOut.map((a) => (
+                  <div
+                    key={a.id}
+                    className={`member-row draggable ${
+                      draggingId === a.id ? 'dragging' : ''
+                    } ${selectedOut.has(a.id) ? 'selected' : ''}`}
+                    draggable
+                    onDragStart={() => handleDragStart(a.id)}
+                    onDragEnd={handleDragEnd}
+                  >
+                    <input
+                      type="checkbox"
+                      className="member-checkbox"
+                      checked={selectedOut.has(a.id)}
+                      onChange={() => toggleSelectOut(a.id)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                    <div className="member-info">
+                      <div className="member-tag">{a.tag_number}</div>
+                      <div className="member-meta">
+                        {a.name && <span>🏷 {a.name} </span>}
+                        {a.sex === 'female' ? '♀' : '♂'}
+                        <span> · {animalAge(a.birth_date)}</span>
+                      </div>
+                    </div>
+                    <button
+                      className="member-btn add"
+                      onClick={() => addOne(a.id)}
+                      disabled={busy}
+                    >
+                      ➕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div
+              className={`member-col ${
+                dragOverCol === 'in' ? 'drag-over' : ''
+              }`}
+              onDragOver={handleDragOver('in')}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop('in')}
+            >
+              <div className="member-col-header">
+                <span>
+                  В гурте ({filteredIn.length}
+                  {search && ` из ${inGroup.length}`})
+                </span>
+                <div className="member-col-actions">
+                  <button
+                    className="mini-add-btn"
+                    onClick={
+                      selectedIn.size === filteredIn.length &&
+                      filteredIn.length > 0
+                        ? clearSelectionIn
+                        : selectAllIn
+                    }
+                    disabled={filteredIn.length === 0}
+                  >
+                    {selectedIn.size === filteredIn.length &&
+                    filteredIn.length > 0
+                      ? '☐ Снять'
+                      : '☑ Все'}
+                  </button>
+                  {inGroup.length > 0 && (
+                    <button
+                      className="mini-add-btn danger"
+                      onClick={removeAll}
+                      disabled={busy}
+                    >
+                      ➖ Все
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {selectedIn.size > 0 && (
+                <div className="member-selected-bar">
+                  <span>
+                    <b>{selectedIn.size}</b> выбрано
+                  </span>
+                  <button
+                    className="btn-bulk-remove"
+                    onClick={removeSelected}
+                    disabled={busy}
+                  >
+                    ➖ Убрать
+                  </button>
+                </div>
+              )}
+
+              <div className="member-list">
+                {filteredIn.length === 0 && (
+                  <p className="member-empty">
+                    {search
+                      ? 'Ничего не найдено'
+                      : 'В гурте пока нет животных'}
+                  </p>
+                )}
+
+                {filteredIn.map((a) => (
+                  <div
+                    key={a.id}
+                    className={`member-row draggable ${
+                      draggingId === a.id ? 'dragging' : ''
+                    } ${selectedIn.has(a.id) ? 'selected' : ''}`}
+                    draggable
+                    onDragStart={() => handleDragStart(a.id)}
+                    onDragEnd={handleDragEnd}
+                  >
+                    <input
+                      type="checkbox"
+                      className="member-checkbox"
+                      checked={selectedIn.has(a.id)}
+                      onChange={() => toggleSelectIn(a.id)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                    <div className="member-info">
+                      <div className="member-tag">{a.tag_number}</div>
+                      <div className="member-meta">
+                        {a.name && <span>🏷 {a.name} </span>}
+                        {a.sex === 'female' ? '♀' : '♂'}
+                        <span> · {animalAge(a.birth_date)}</span>
+                      </div>
+                    </div>
+                    <button
+                      className="member-btn remove"
+                      onClick={() => removeOne(a.id)}
+                      disabled={busy}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="member-footer">
+            <span>
+              Всего в гурте: <b>{inGroup.length}</b> из{' '}
+              <b>{active.length}</b> активных
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ============ ФИНАНСЫ ============
 function FinanceTab({
   groups,
@@ -567,9 +2248,9 @@ function FinanceTab({
       if (dateTo) params.date_to = dateTo
 
       const [s, e, i] = await Promise.all([
-        axios.get<FinanceSummary>(`${API}/finance/summary`, { params }),
-        axios.get<Expense[]>(`${API}/expenses`, { params }),
-        axios.get<Income[]>(`${API}/incomes`, { params }),
+        api.get<FinanceSummary>(`${API}/finance/summary`, { params }),
+        api.get<Expense[]>(`${API}/expenses`, { params }),
+        api.get<Income[]>(`${API}/incomes`, { params }),
       ])
       setSummary(s.data)
       setExpenses(e.data)
@@ -599,7 +2280,7 @@ function FinanceTab({
   const deleteExpense = async (id: number) => {
     if (!confirm('Удалить расход?')) return
     try {
-      await axios.delete(`${API}/expenses/${id}`)
+      await api.delete(`${API}/expenses/${id}`)
       loadFinance()
     } catch (err) {
       console.error(err)
@@ -609,7 +2290,7 @@ function FinanceTab({
   const deleteIncome = async (id: number) => {
     if (!confirm('Удалить доход?')) return
     try {
-      await axios.delete(`${API}/incomes/${id}`)
+      await api.delete(`${API}/incomes/${id}`)
       loadFinance()
       onReloadAll()
     } catch (err) {
@@ -1044,7 +2725,7 @@ function ExpenseForm({
 
     setSaving(true)
     try {
-      await axios.post(`${API}/expenses`, {
+      await api.post(`${API}/expenses`, {
         category: form.category,
         amount: Number(form.amount),
         expense_date: form.expense_date,
@@ -1232,7 +2913,7 @@ function IncomeForm({
 
     setSaving(true)
     try {
-      await axios.post(`${API}/incomes`, {
+      await api.post(`${API}/incomes`, {
         category: form.category,
         amount: Number(form.amount),
         income_date: form.income_date,
@@ -1445,1666 +3126,6 @@ function IncomeForm({
   )
 }
 
-// ============ МОДАЛКА: СОСТАВ ГУРТА ============
-function GroupMembershipModal({
-  group,
-  animals,
-  onClose,
-  onChanged,
-}: {
-  group: Group
-  animals: Animal[]
-  onClose: () => void
-  onChanged: () => void
-}) {
-  const [search, setSearch] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-
-  const [selectedOut, setSelectedOut] = useState<Set<number>>(new Set())
-  const [selectedIn, setSelectedIn] = useState<Set<number>>(new Set())
-
-  const [draggingId, setDraggingId] = useState<number | null>(null)
-  const [dragOverCol, setDragOverCol] = useState<'in' | 'out' | null>(null)
-
-  const active = useMemo(
-    () => animals.filter((a) => a.status === 'active'),
-    [animals]
-  )
-
-  const inGroup = useMemo(
-    () => active.filter((a) => a.group_id === group.id),
-    [active, group.id]
-  )
-
-  const notInGroup = useMemo(
-    () =>
-      active
-        .filter((a) => a.group_id !== group.id)
-        .sort((a, b) => a.tag_number.localeCompare(b.tag_number)),
-    [active, group.id]
-  )
-
-  useEffect(() => {
-    setSelectedOut(new Set())
-    setSelectedIn(new Set())
-  }, [search])
-
-  const filterBySearch = (list: Animal[]) => {
-    if (!search.trim()) return list
-    const q = search.toLowerCase()
-    return list.filter(
-      (a) =>
-        a.tag_number.toLowerCase().includes(q) ||
-        (a.name?.toLowerCase() || '').includes(q) ||
-        (a.chip_number?.toLowerCase() || '').includes(q)
-    )
-  }
-
-  const filteredIn = filterBySearch(inGroup)
-  const filteredOut = filterBySearch(notInGroup)
-
-  const addOne = async (id: number) => {
-    setBusy(true)
-    setError('')
-    try {
-      await axios.post(`${API}/groups/${group.id}/assign`, {
-        animal_ids: [id],
-        action: 'add',
-      })
-      setSelectedOut((prev) => {
-        const n = new Set(prev)
-        n.delete(id)
-        return n
-      })
-      onChanged()
-    } catch (err) {
-      const p = parseApiError(err)
-      setError(p.general)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const removeOne = async (id: number) => {
-    setBusy(true)
-    setError('')
-    try {
-      await axios.post(`${API}/groups/${group.id}/assign`, {
-        animal_ids: [id],
-        action: 'remove',
-      })
-      setSelectedIn((prev) => {
-        const n = new Set(prev)
-        n.delete(id)
-        return n
-      })
-      onChanged()
-    } catch (err) {
-      const p = parseApiError(err)
-      setError(p.general)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const addSelected = async () => {
-    if (selectedOut.size === 0) return
-    setBusy(true)
-    setError('')
-    try {
-      await axios.post(`${API}/groups/${group.id}/assign`, {
-        animal_ids: Array.from(selectedOut),
-        action: 'add',
-      })
-      setSelectedOut(new Set())
-      onChanged()
-    } catch (err) {
-      const p = parseApiError(err)
-      setError(p.general)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const removeSelected = async () => {
-    if (selectedIn.size === 0) return
-    setBusy(true)
-    setError('')
-    try {
-      await axios.post(`${API}/groups/${group.id}/assign`, {
-        animal_ids: Array.from(selectedIn),
-        action: 'remove',
-      })
-      setSelectedIn(new Set())
-      onChanged()
-    } catch (err) {
-      const p = parseApiError(err)
-      setError(p.general)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const addAll = async () => {
-    if (filteredOut.length === 0) return
-    setBusy(true)
-    setError('')
-    try {
-      await axios.post(`${API}/groups/${group.id}/assign`, {
-        animal_ids: filteredOut.map((a) => a.id),
-        action: 'add',
-      })
-      setSelectedOut(new Set())
-      onChanged()
-    } catch (err) {
-      const p = parseApiError(err)
-      setError(p.general)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const removeAll = async () => {
-    if (inGroup.length === 0) return
-    if (!confirm(`Убрать всех ${inGroup.length} животных из «${group.name}»?`))
-      return
-    setBusy(true)
-    setError('')
-    try {
-      await axios.post(`${API}/groups/${group.id}/assign`, {
-        animal_ids: inGroup.map((a) => a.id),
-        action: 'remove',
-      })
-      setSelectedIn(new Set())
-      onChanged()
-    } catch (err) {
-      const p = parseApiError(err)
-      setError(p.general)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const toggleSelectOut = (id: number) => {
-    setSelectedOut((prev) => {
-      const n = new Set(prev)
-      if (n.has(id)) n.delete(id)
-      else n.add(id)
-      return n
-    })
-  }
-
-  const toggleSelectIn = (id: number) => {
-    setSelectedIn((prev) => {
-      const n = new Set(prev)
-      if (n.has(id)) n.delete(id)
-      else n.add(id)
-      return n
-    })
-  }
-
-  const selectAllOut = () =>
-    setSelectedOut(new Set(filteredOut.map((a) => a.id)))
-  const selectAllIn = () => setSelectedIn(new Set(filteredIn.map((a) => a.id)))
-  const clearSelectionOut = () => setSelectedOut(new Set())
-  const clearSelectionIn = () => setSelectedIn(new Set())
-
-  const handleDragStart = (id: number) => setDraggingId(id)
-  const handleDragEnd = () => {
-    setDraggingId(null)
-    setDragOverCol(null)
-  }
-
-  const handleDragOver = (col: 'in' | 'out') => (e: React.DragEvent) => {
-    e.preventDefault()
-    setDragOverCol(col)
-  }
-
-  const handleDragLeave = () => setDragOverCol(null)
-
-  const handleDrop = (col: 'in' | 'out') => async (e: React.DragEvent) => {
-    e.preventDefault()
-    setDragOverCol(null)
-    const id = draggingId
-    setDraggingId(null)
-    if (!id) return
-    const animal = active.find((a) => a.id === id)
-    if (!animal) return
-    if (col === 'in' && animal.group_id === group.id) return
-    if (col === 'out' && animal.group_id !== group.id) return
-    if (col === 'in') await addOne(id)
-    else await removeOne(id)
-  }
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2>👥 {group.name}</h2>
-          <button className="close-btn" onClick={onClose}>
-            ✕
-          </button>
-        </div>
-
-        <div className="modal-body">
-          <div className="member-search-row">
-            <input
-              className="search-input"
-              placeholder="🔍 Бирка, кличка, чип"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-
-          {error && (
-            <div className="form-error">
-              <span className="error-icon">⚠️</span>
-              <span>{error}</span>
-            </div>
-          )}
-
-          <div className="member-hint">
-            💡 Перетаскивайте карточки между колонками или используйте чекбоксы
-            для массовых операций
-          </div>
-
-          <div className="member-columns">
-            <div
-              className={`member-col ${
-                dragOverCol === 'out' ? 'drag-over' : ''
-              }`}
-              onDragOver={handleDragOver('out')}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop('out')}
-            >
-              <div className="member-col-header">
-                <span>
-                  Доступные ({filteredOut.length}
-                  {search && ` из ${notInGroup.length}`})
-                </span>
-                <div className="member-col-actions">
-                  <button
-                    className="mini-add-btn"
-                    onClick={
-                      selectedOut.size === filteredOut.length &&
-                      filteredOut.length > 0
-                        ? clearSelectionOut
-                        : selectAllOut
-                    }
-                    disabled={filteredOut.length === 0}
-                  >
-                    {selectedOut.size === filteredOut.length &&
-                    filteredOut.length > 0
-                      ? '☐ Снять'
-                      : '☑ Все'}
-                  </button>
-                  {filteredOut.length > 0 && (
-                    <button
-                      className="mini-add-btn"
-                      onClick={addAll}
-                      disabled={busy}
-                    >
-                      ➕ Все
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {selectedOut.size > 0 && (
-                <div className="member-selected-bar">
-                  <span>
-                    <b>{selectedOut.size}</b> выбрано
-                  </span>
-                  <button
-                    className="btn-bulk-add"
-                    onClick={addSelected}
-                    disabled={busy}
-                  >
-                    ➕ Добавить
-                  </button>
-                </div>
-              )}
-
-              <div className="member-list">
-                {filteredOut.length === 0 && (
-                  <p className="member-empty">
-                    {search
-                      ? 'Ничего не найдено'
-                      : 'Все активные животные уже в этом гурте'}
-                  </p>
-                )}
-
-                {filteredOut.map((a) => (
-                  <div
-                    key={a.id}
-                    className={`member-row draggable ${
-                      draggingId === a.id ? 'dragging' : ''
-                    } ${selectedOut.has(a.id) ? 'selected' : ''}`}
-                    draggable
-                    onDragStart={() => handleDragStart(a.id)}
-                    onDragEnd={handleDragEnd}
-                  >
-                    <input
-                      type="checkbox"
-                      className="member-checkbox"
-                      checked={selectedOut.has(a.id)}
-                      onChange={() => toggleSelectOut(a.id)}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                    <div className="member-info">
-                      <div className="member-tag">{a.tag_number}</div>
-                      <div className="member-meta">
-                        {a.name && <span>🏷 {a.name} </span>}
-                        {a.sex === 'female' ? '♀' : '♂'}
-                        <span> · {animalAge(a.birth_date)}</span>
-                      </div>
-                    </div>
-                    <button
-                      className="member-btn add"
-                      onClick={() => addOne(a.id)}
-                      disabled={busy}
-                    >
-                      ➕
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div
-              className={`member-col ${
-                dragOverCol === 'in' ? 'drag-over' : ''
-              }`}
-              onDragOver={handleDragOver('in')}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop('in')}
-            >
-              <div className="member-col-header">
-                <span>
-                  В гурте ({filteredIn.length}
-                  {search && ` из ${inGroup.length}`})
-                </span>
-                <div className="member-col-actions">
-                  <button
-                    className="mini-add-btn"
-                    onClick={
-                      selectedIn.size === filteredIn.length &&
-                      filteredIn.length > 0
-                        ? clearSelectionIn
-                        : selectAllIn
-                    }
-                    disabled={filteredIn.length === 0}
-                  >
-                    {selectedIn.size === filteredIn.length &&
-                    filteredIn.length > 0
-                      ? '☐ Снять'
-                      : '☑ Все'}
-                  </button>
-                  {inGroup.length > 0 && (
-                    <button
-                      className="mini-add-btn danger"
-                      onClick={removeAll}
-                      disabled={busy}
-                    >
-                      ➖ Все
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {selectedIn.size > 0 && (
-                <div className="member-selected-bar">
-                  <span>
-                    <b>{selectedIn.size}</b> выбрано
-                  </span>
-                  <button
-                    className="btn-bulk-remove"
-                    onClick={removeSelected}
-                    disabled={busy}
-                  >
-                    ➖ Убрать
-                  </button>
-                </div>
-              )}
-
-              <div className="member-list">
-                {filteredIn.length === 0 && (
-                  <p className="member-empty">
-                    {search
-                      ? 'Ничего не найдено'
-                      : 'В гурте пока нет животных'}
-                  </p>
-                )}
-
-                {filteredIn.map((a) => (
-                  <div
-                    key={a.id}
-                    className={`member-row draggable ${
-                      draggingId === a.id ? 'dragging' : ''
-                    } ${selectedIn.has(a.id) ? 'selected' : ''}`}
-                    draggable
-                    onDragStart={() => handleDragStart(a.id)}
-                    onDragEnd={handleDragEnd}
-                  >
-                    <input
-                      type="checkbox"
-                      className="member-checkbox"
-                      checked={selectedIn.has(a.id)}
-                      onChange={() => toggleSelectIn(a.id)}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                    <div className="member-info">
-                      <div className="member-tag">{a.tag_number}</div>
-                      <div className="member-meta">
-                        {a.name && <span>🏷 {a.name} </span>}
-                        {a.sex === 'female' ? '♀' : '♂'}
-                        <span> · {animalAge(a.birth_date)}</span>
-                      </div>
-                    </div>
-                    <button
-                      className="member-btn remove"
-                      onClick={() => removeOne(a.id)}
-                      disabled={busy}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="member-footer">
-            <span>
-              Всего в гурте: <b>{inGroup.length}</b> из{' '}
-              <b>{active.length}</b> активных
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ============ ГУРТОВАЯ ВАКЦИНАЦИЯ ============
-function GroupVaccinationTab({
-  groups,
-  animals,
-  onReload,
-}: {
-  groups: Group[]
-  animals: Animal[]
-  onReload: () => void
-}) {
-  const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null)
-  const [upcoming, setUpcoming] = useState<GroupUpcoming[]>([])
-  const [loading, setLoading] = useState(false)
-  const [expandedDisease, setExpandedDisease] = useState<string | null>(null)
-  const [actualDate, setActualDate] = useState(
-    new Date().toISOString().slice(0, 10)
-  )
-  const [vetName, setVetName] = useState('')
-  const [doseUsed, setDoseUsed] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState('')
-  const [error, setError] = useState('')
-
-  const loadUpcoming = useCallback(async (gid: number) => {
-    setLoading(true)
-    setUpcoming([])
-    try {
-      const { data } = await axios.get<GroupUpcoming[]>(
-        `${API}/groups/${gid}/upcoming-vaccinations`
-      )
-      setUpcoming(data)
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (selectedGroupId) {
-      loadUpcoming(selectedGroupId)
-    }
-  }, [selectedGroupId, loadUpcoming])
-
-  const selectedGroup = groups.find((g) => g.id === selectedGroupId)
-  const groupAnimals = animals.filter(
-    (a) => a.group_id === selectedGroupId && a.status === 'active'
-  )
-
-  const submitMass = async (disease: string) => {
-    if (!selectedGroupId) return
-    if (!actualDate) {
-      setError('Укажите дату выполнения')
-      return
-    }
-    setSaving(true)
-    setError('')
-    setMessage('')
-
-    try {
-      const { data } = await axios.post(
-        `${API}/groups/${selectedGroupId}/complete-vaccinations`,
-        {
-          disease,
-          actual_date: actualDate,
-          vet_name: vetName.trim() || null,
-          dose_used: doseUsed.trim() || null,
-        }
-      )
-      setMessage(
-        `✅ Отмечено ${data.updated} вакцинаций у ${data.animals_count} животных`
-      )
-      setExpandedDisease(null)
-      setVetName('')
-      setDoseUsed('')
-      loadUpcoming(selectedGroupId)
-      onReload()
-      setTimeout(() => setMessage(''), 5000)
-    } catch (err) {
-      const p = parseApiError(err)
-      setError(p.general)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div>
-      <div className="gv-section">
-        <div className="gv-section-title">1. Выберите гурт</div>
-        {groups.length === 0 ? (
-          <p className="empty">
-            Сначала создайте группы на вкладке «Группы»
-          </p>
-        ) : (
-          <div className="filter-row">
-            {groups.map((g) => {
-              const count = animals.filter(
-                (a) => a.group_id === g.id && a.status === 'active'
-              ).length
-              return (
-                <button
-                  key={g.id}
-                  className={`chip ${
-                    selectedGroupId === g.id ? 'active' : ''
-                  }`}
-                  onClick={() => {
-                    setSelectedGroupId(g.id)
-                    setExpandedDisease(null)
-                    setMessage('')
-                    setError('')
-                  }}
-                >
-                  {g.name} ({count})
-                </button>
-              )
-            })}
-          </div>
-        )}
-      </div>
-
-      {selectedGroupId && (
-        <div className="gv-section">
-          <div className="gv-section-title">
-            2. Предстоящие вакцинации для «{selectedGroup?.name}»
-          </div>
-
-          {loading && <p className="empty-small">Загрузка…</p>}
-
-          {!loading && upcoming.length === 0 && (
-            <p className="empty">
-              Нет предстоящих вакцинаций. Сгенерируйте календари на вкладке
-              «Поголовье».
-            </p>
-          )}
-
-          {message && (
-            <div className="gv-success">
-              <span>{message}</span>
-            </div>
-          )}
-
-          {error && (
-            <div className="form-error">
-              <span className="error-icon">⚠️</span>
-              <span>{error}</span>
-            </div>
-          )}
-
-          <div className="list">
-            {upcoming.map((u) => {
-              const earliestDays = daysUntil(u.earliest_date)
-              const overdue = u.overdue_count > 0
-              const soon = !overdue && earliestDays <= 3
-              const isExpanded = expandedDisease === u.disease
-
-              return (
-                <div
-                  key={u.disease}
-                  className={`card gv-card ${
-                    overdue ? 'card-urgent' : soon ? 'card-soon' : ''
-                  }`}
-                >
-                  <div className="gv-card-header">
-                    <div>
-                      <div className="gv-card-title">💉 {u.disease}</div>
-                      <div className="gv-card-meta">
-                        <span>
-                          <b>{u.count}</b> голов
-                        </span>
-                        <span>📅 с {formatDate(u.earliest_date)}</span>
-                        {u.earliest_date !== u.latest_date && (
-                          <span>по {formatDate(u.latest_date)}</span>
-                        )}
-                        {overdue && (
-                          <span className="gv-overdue">
-                            ⚠️ просрочено у {u.overdue_count}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {!isExpanded && (
-                    <button
-                      className="gv-mass-btn"
-                      onClick={() => {
-                        setExpandedDisease(u.disease)
-                        setActualDate(new Date().toISOString().slice(0, 10))
-                        setVetName('')
-                        setDoseUsed('')
-                        setError('')
-                        setMessage('')
-                      }}
-                    >
-                      ✅ Отметить всем {u.count} головам
-                    </button>
-                  )}
-
-                  {isExpanded && (
-                    <div className="gv-form">
-                      <div className="gv-form-title">
-                        Массовая отметка: {u.disease}
-                      </div>
-
-                      <div className="form-row">
-                        <div className="form-field">
-                          <label>
-                            Дата выполнения <span className="req">*</span>
-                          </label>
-                          <input
-                            type="date"
-                            value={actualDate}
-                            onChange={(e) => setActualDate(e.target.value)}
-                          />
-                        </div>
-
-                        <div className="form-field">
-                          <label>Ветеринар</label>
-                          <input
-                            value={vetName}
-                            onChange={(e) => setVetName(e.target.value)}
-                            placeholder="ФИО"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="form-field">
-                        <label>Доза / препарат</label>
-                        <input
-                          value={doseUsed}
-                          onChange={(e) => setDoseUsed(e.target.value)}
-                          placeholder="2 мл, серия 12345"
-                        />
-                      </div>
-
-                      <div className="gv-form-summary">
-                        Будет отмечено <b>{u.count}</b> вакцинаций у{' '}
-                        <b>{u.count}</b> голов гурта «{selectedGroup?.name}»
-                      </div>
-
-                      <div className="complete-actions">
-                        <button
-                          className="btn-cancel"
-                          onClick={() => setExpandedDisease(null)}
-                          disabled={saving}
-                        >
-                          Отмена
-                        </button>
-                        <button
-                          className="btn-save"
-                          onClick={() => submitMass(u.disease)}
-                          disabled={saving}
-                        >
-                          {saving
-                            ? '⏳ Сохраняю…'
-                            : `✅ Отметить всем (${u.count})`}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {!selectedGroupId && groups.length > 0 && (
-        <div className="gv-hint">
-          <div className="gv-hint-icon">💡</div>
-          <div>
-            <b>Как это работает:</b>
-            <ol>
-              <li>Выберите гурт сверху</li>
-              <li>Увидите список предстоящих вакцинаций для всех животных</li>
-              <li>
-                Нажмите «Отметить всем» — все вакцинации одного типа будут
-                отмечены за раз
-              </li>
-            </ol>
-            <p>
-              Всего в выбранном гурте:{' '}
-              <b>{groupAnimals.length} активных голов</b>
-            </p>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ============ ДАШБОРД ============// ============ ДАШБОРД ============
-function DashboardTab({
-  dashboard,
-  onReload,
-}: {
-  dashboard: Dashboard | null
-  onReload: () => void
-}) {
-  const [full, setFull] = useState<DashboardFull | null>(null)
-  const [upcoming, setUpcoming] = useState<
-    (Vaccination & { animal?: Animal; vaccine?: Vaccine })[]
-  >([])
-  const [recentEvents, setRecentEvents] = useState<
-    (AnimalEvent & { animal?: Animal })[]
-  >([])
-  const [loading, setLoading] = useState(true)
-
-  const loadDashboard = useCallback(async () => {
-    setLoading(true)
-    try {
-      const [fullRes, vacRes, anRes, vcRes, evRes] = await Promise.all([
-        axios.get<DashboardFull>(`${API}/dashboard/full`),
-        axios.get<Vaccination[]>(`${API}/vaccinations?is_done=false`),
-        axios.get<Animal[]>(`${API}/animals`),
-        axios.get<Vaccine[]>(`${API}/vaccines`),
-        axios.get<AnimalEvent[]>(`${API}/events`),
-      ])
-
-      setFull(fullRes.data)
-
-      const anMap: Record<number, Animal> = {}
-      anRes.data.forEach((a) => (anMap[a.id] = a))
-      const vcMap: Record<number, Vaccine> = {}
-      vcRes.data.forEach((v) => (vcMap[v.id] = v))
-
-      setUpcoming(
-        vacRes.data
-          .map((v) => ({
-            ...v,
-            animal: anMap[v.animal_id],
-            vaccine: vcMap[v.vaccine_id],
-          }))
-          .sort((a, b) => a.planned_date.localeCompare(b.planned_date))
-          .slice(0, 7)
-      )
-
-      setRecentEvents(
-        evRes.data
-          .slice(0, 5)
-          .map((ev) => ({ ...ev, animal: anMap[ev.animal_id] }))
-      )
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    loadDashboard()
-  }, [loadDashboard, dashboard])
-
-  if (loading && !full) {
-    return <p className="empty">Загрузка…</p>
-  }
-
-  return (
-    <div>
-      {/* === ВАКЦИНАЦИЯ === */}
-      <h2 className="section-title">💉 Вакцинация</h2>
-      <div className="stats-row">
-        <div className="stat-card">
-          <div className="stat-value blue">
-            {full?.vaccination.active ?? 0}
-          </div>
-          <div className="stat-label">Активных голов</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value orange">
-            {full?.vaccination.upcoming_7 ?? 0}
-          </div>
-          <div className="stat-label">На неделе</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value red">
-            {full?.vaccination.overdue ?? 0}
-          </div>
-          <div className="stat-label">Просрочено</div>
-        </div>
-      </div>
-
-      {/* === ПОГОЛОВЬЕ === */}
-      <h2 className="section-title">🐄 Поголовье</h2>
-      <div className="dash-grid-4">
-        <div className="dash-mini">
-          <div className="dash-mini-icon">🐄</div>
-          <div className="dash-mini-value">{full?.animals.cows ?? 0}</div>
-          <div className="dash-mini-label">Коровы</div>
-        </div>
-        <div className="dash-mini">
-          <div className="dash-mini-icon">🐂</div>
-          <div className="dash-mini-value">{full?.animals.bulls ?? 0}</div>
-          <div className="dash-mini-label">Быки</div>
-        </div>
-        <div className="dash-mini">
-          <div className="dash-mini-icon">🐮</div>
-          <div className="dash-mini-value">{full?.animals.young ?? 0}</div>
-          <div className="dash-mini-label">Молодняк</div>
-        </div>
-        <div className="dash-mini">
-          <div className="dash-mini-icon">👥</div>
-          <div className="dash-mini-value">{full?.animals.groups ?? 0}</div>
-          <div className="dash-mini-label">Групп</div>
-        </div>
-      </div>
-
-      {/* === ФИНАНСЫ 30 ДНЕЙ === */}
-      <h2 className="section-title">💰 Финансы за 30 дней</h2>
-      <div className="dash-fin-row">
-        <div className="dash-fin-card income">
-          <div className="dash-fin-label">Доходы</div>
-          <div className="dash-fin-value">
-            +{formatMoney(full?.finance_30d.income ?? 0)}
-          </div>
-        </div>
-        <div className="dash-fin-card expense">
-          <div className="dash-fin-label">Расходы</div>
-          <div className="dash-fin-value">
-            −{formatMoney(full?.finance_30d.expense ?? 0)}
-          </div>
-        </div>
-        <div
-          className={`dash-fin-card profit ${
-            (full?.finance_30d.profit ?? 0) >= 0 ? 'positive' : 'negative'
-          }`}
-        >
-          <div className="dash-fin-label">Прибыль</div>
-          <div className="dash-fin-value">
-            {formatMoney(full?.finance_30d.profit ?? 0)}
-          </div>
-        </div>
-      </div>
-
-      {/* === БЛИЖАЙШИЕ ВАКЦИНАЦИИ === */}
-      <h2 className="section-title">📅 Ближайшие вакцинации</h2>
-
-      {upcoming.length === 0 ? (
-        <p className="empty">Нет предстоящих вакцинаций</p>
-      ) : (
-        <div className="list">
-          {upcoming.map((v) => {
-            const days = daysUntil(v.planned_date)
-            const urgent = days < 0
-            const soon = days >= 0 && days <= 3
-            return (
-              <div
-                key={v.id}
-                className={`card ${
-                  urgent ? 'card-urgent' : soon ? 'card-soon' : ''
-                }`}
-              >
-                <div className="card-title">
-                  <span className="tag">{v.animal?.tag_number || '—'}</span>
-                  <span
-                    className={`badge ${
-                      urgent ? 'badge-red' : soon ? 'badge-orange' : ''
-                    }`}
-                  >
-                    {urgent
-                      ? `просрочено на ${Math.abs(days)} дн.`
-                      : days === 0
-                      ? 'сегодня'
-                      : days === 1
-                      ? 'завтра'
-                      : `через ${days} дн.`}
-                  </span>
-                </div>
-                <div className="card-meta">
-                  <span>💉 {v.vaccine?.disease || 'вакцинация'}</span>
-                  <span>📅 {formatDate(v.planned_date)}</span>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {/* === ПОСЛЕДНИЕ СОБЫТИЯ === */}
-      <h2 className="section-title">📝 Последние события</h2>
-
-      {recentEvents.length === 0 ? (
-        <p className="empty">Событий пока нет</p>
-      ) : (
-        <div className="events-list">
-          {recentEvents.map((ev) => (
-            <div key={ev.id} className="dash-event-row">
-              <div className="dash-event-icon">
-                {EVENT_LABELS[ev.event_type]?.split(' ')[0] || '📝'}
-              </div>
-              <div className="dash-event-info">
-                <div className="dash-event-title">
-                  {EVENT_LABELS[ev.event_type] || ev.event_type}
-                  {ev.animal && (
-                    <span className="dash-event-tag">
-                      {' '}
-                      · 🐄 {ev.animal.tag_number}
-                    </span>
-                  )}
-                </div>
-                <div className="dash-event-meta">
-                  📅 {formatDate(ev.event_date)}
-                  {ev.description && ` · ${ev.description}`}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <button className="reload-btn" onClick={loadDashboard}>
-        🔄 Обновить
-      </button>
-    </div>
-  )
-}
-
-// ============ ПОГОЛОВЬЕ ============
-function AnimalsTab({
-  animals,
-  groups,
-  onReload,
-  onSelect,
-  showAddForm,
-  setShowAddForm,
-}: {
-  animals: Animal[]
-  groups: Group[]
-  onReload: () => void
-  onSelect: (a: Animal) => void
-  showAddForm: boolean
-  setShowAddForm: (v: boolean) => void
-}) {
-  const [search, setSearch] = useState('')
-  const [groupFilter, setGroupFilter] = useState<number | 'all'>('all')
-  const [statusFilter, setStatusFilter] = useState<string>('active')
-
-  const filtered = useMemo(() => {
-    let list = animals
-    if (statusFilter !== 'all') {
-      list = list.filter((a) => a.status === statusFilter)
-    }
-    if (groupFilter !== 'all') {
-      list = list.filter((a) => a.group_id === groupFilter)
-    }
-    if (search.trim()) {
-      const q = search.toLowerCase()
-      list = list.filter(
-        (a) =>
-          a.tag_number.toLowerCase().includes(q) ||
-          (a.name?.toLowerCase() || '').includes(q) ||
-          (a.chip_number?.toLowerCase() || '').includes(q)
-      )
-    }
-    return list
-  }, [animals, search, groupFilter, statusFilter])
-
-  return (
-    <div>
-      <div className="toolbar">
-        <input
-          className="search-input"
-          placeholder="🔍 Бирка, кличка, чип"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <button
-          className="add-btn"
-          onClick={() => setShowAddForm(!showAddForm)}
-        >
-          {showAddForm ? '✕ Отмена' : '+ Добавить'}
-        </button>
-      </div>
-
-      <div className="filter-row">
-        {['active', 'all', 'sold', 'dead'].map((s) => (
-          <button
-            key={s}
-            className={statusFilter === s ? 'chip active' : 'chip'}
-            onClick={() => setStatusFilter(s)}
-          >
-            {s === 'active'
-              ? 'Активные'
-              : s === 'all'
-              ? 'Все'
-              : s === 'sold'
-              ? 'Проданные'
-              : 'Падёж'}
-          </button>
-        ))}
-      </div>
-
-      {groups.length > 0 && (
-        <div className="filter-row">
-          <button
-            className={groupFilter === 'all' ? 'chip active' : 'chip'}
-            onClick={() => setGroupFilter('all')}
-          >
-            Все группы
-          </button>
-          {groups.map((g) => {
-            const count = animals.filter((a) => a.group_id === g.id).length
-            return (
-              <button
-                key={g.id}
-                className={groupFilter === g.id ? 'chip active' : 'chip'}
-                onClick={() => setGroupFilter(g.id)}
-              >
-                {g.name} ({count})
-              </button>
-            )
-          })}
-        </div>
-      )}
-
-      {showAddForm && (
-        <AddAnimalForm
-          groups={groups}
-          onCreated={() => {
-            setShowAddForm(false)
-            onReload()
-          }}
-        />
-      )}
-
-      {filtered.length === 0 && <p className="empty">Животные не найдены</p>}
-
-      <div className="list">
-        {filtered.map((a) => (
-          <div
-            key={a.id}
-            className="card clickable"
-            onClick={() => onSelect(a)}
-          >
-            <div className="card-title">
-              <span className="tag">{a.tag_number}</span>
-              <span className="sex">{a.sex === 'female' ? '♀' : '♂'}</span>
-            </div>
-            <div className="card-meta">
-              {a.name && <span>🏷 {a.name}</span>}
-              <span>🐄 {a.breed}</span>
-              <span>🎂 {animalAge(a.birth_date)}</span>
-              {a.group_id && (
-                <span>
-                  👥 {groups.find((g) => g.id === a.group_id)?.name || '—'}
-                </span>
-              )}
-              {a.status !== 'active' && (
-                <span className="status-badge">
-                  {STATUS_LABELS[a.status] || a.status}
-                </span>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-// ============ ГРУППЫ ============
-function GroupsTab({
-  groups,
-  animals,
-  onReload,
-  onManage,
-}: {
-  groups: Group[]
-  animals: Animal[]
-  onReload: () => void
-  onManage: (g: Group) => void
-}) {
-  const [showForm, setShowForm] = useState(false)
-  const [editGroup, setEditGroup] = useState<Group | null>(null)
-  const [form, setForm] = useState({ name: '', description: '' })
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
-  const [generalError, setGeneralError] = useState('')
-  const [saving, setSaving] = useState(false)
-
-  const openCreate = () => {
-    setEditGroup(null)
-    setForm({ name: '', description: '' })
-    setFieldErrors({})
-    setGeneralError('')
-    setShowForm(true)
-  }
-
-  const openEdit = (g: Group) => {
-    setEditGroup(g)
-    setForm({ name: g.name, description: g.description || '' })
-    setFieldErrors({})
-    setGeneralError('')
-    setShowForm(true)
-  }
-
-  const closeForm = () => {
-    setShowForm(false)
-    setEditGroup(null)
-  }
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setFieldErrors({})
-    setGeneralError('')
-
-    if (!form.name.trim()) {
-      setFieldErrors({ name: 'Укажите название группы' })
-      setGeneralError('Исправьте выделенные поля')
-      return
-    }
-
-    setSaving(true)
-    try {
-      const payload = {
-        name: form.name.trim(),
-        description: form.description.trim() || null,
-      }
-      if (editGroup) {
-        await axios.patch(`${API}/groups/${editGroup.id}`, payload)
-      } else {
-        await axios.post(`${API}/groups`, payload)
-      }
-      closeForm()
-      onReload()
-    } catch (err) {
-      const p = parseApiError(err)
-      setFieldErrors(p.fields)
-      setGeneralError(p.general)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const remove = async (g: Group) => {
-    const count = animals.filter((a) => a.group_id === g.id).length
-    if (
-      !confirm(
-        `Удалить группу «${g.name}»?${
-          count ? `\n${count} животных будут без группы.` : ''
-        }`
-      )
-    )
-      return
-    try {
-      await axios.delete(`${API}/groups/${g.id}`)
-      onReload()
-    } catch (err) {
-      alert('Не удалось удалить')
-    }
-  }
-
-  return (
-    <div>
-      <div className="toolbar">
-        <button className="add-btn" onClick={openCreate}>
-          + Создать группу
-        </button>
-      </div>
-
-      {showForm && (
-        <form className="form-card" onSubmit={submit} noValidate>
-          <h3>{editGroup ? 'Редактировать группу' : 'Новая группа'}</h3>
-
-          {generalError && (
-            <div className="form-error">
-              <span className="error-icon">⚠️</span>
-              <span>{generalError}</span>
-            </div>
-          )}
-
-          <div className="form-field">
-            <label>
-              Название <span className="req">*</span>
-            </label>
-            <input
-              className={fieldErrors.name ? 'has-error' : ''}
-              value={form.name}
-              onChange={(e) => {
-                setForm({ ...form, name: e.target.value })
-                if (fieldErrors.name) {
-                  const n = { ...fieldErrors }
-                  delete n.name
-                  setFieldErrors(n)
-                }
-              }}
-              placeholder="Гурт №1"
-            />
-            {fieldErrors.name && (
-              <div className="field-error">{fieldErrors.name}</div>
-            )}
-          </div>
-
-          <div className="form-field">
-            <label>Описание</label>
-            <input
-              value={form.description}
-              onChange={(e) =>
-                setForm({ ...form, description: e.target.value })
-              }
-              placeholder="Стельные коровы"
-            />
-          </div>
-
-          <div className="complete-actions">
-            <button
-              type="button"
-              className="btn-cancel"
-              onClick={closeForm}
-              disabled={saving}
-            >
-              Отмена
-            </button>
-            <button type="submit" className="btn-save" disabled={saving}>
-              {saving ? '⏳…' : editGroup ? '💾 Сохранить' : '💾 Создать'}
-            </button>
-          </div>
-        </form>
-      )}
-
-      {groups.length === 0 && !showForm && (
-        <p className="empty">Групп пока нет — создайте первую</p>
-      )}
-
-      <div className="list">
-        {groups.map((g) => {
-          const count = animals.filter(
-            (a) => a.group_id === g.id && a.status === 'active'
-          ).length
-          return (
-            <div key={g.id} className="card group-card">
-              <div className="group-card-main">
-                <div className="group-name">
-                  👥 {g.name}
-                  <span className="group-count">{count}</span>
-                </div>
-                {g.description && (
-                  <div className="group-desc">{g.description}</div>
-                )}
-              </div>
-              <div className="group-actions">
-                <button
-                  className="icon-btn primary"
-                  onClick={() => onManage(g)}
-                  title="Состав гурта"
-                >
-                  🐄
-                </button>
-                <button
-                  className="icon-btn"
-                  onClick={() => openEdit(g)}
-                  title="Редактировать"
-                >
-                  ✏️
-                </button>
-                <button
-                  className="icon-btn danger"
-                  onClick={() => remove(g)}
-                  title="Удалить"
-                >
-                  🗑
-                </button>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-// ============ ФОРМА ЖИВОТНОГО ============
-function AddAnimalForm({
-  groups,
-  onCreated,
-}: {
-  groups: Group[]
-  onCreated: () => void
-}) {
-  const [form, setForm] = useState({
-    tag_number: '',
-    name: '',
-    sex: 'female',
-    birth_date: '',
-    breed: 'Калмыцкая',
-    color: '',
-    group_id: '',
-  })
-
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
-  const [generalError, setGeneralError] = useState('')
-  const [saving, setSaving] = useState(false)
-
-  const validate = (): Record<string, string> => {
-    const errs: Record<string, string> = {}
-    if (!form.tag_number.trim()) {
-      errs.tag_number = 'Укажите номер бирки'
-    } else if (form.tag_number.trim().length < 3) {
-      errs.tag_number = 'Минимум 3 символа'
-    } else if (form.tag_number.trim().length > 50) {
-      errs.tag_number = 'Максимум 50 символов'
-    }
-    if (form.birth_date) {
-      const d = new Date(form.birth_date)
-      const today = new Date()
-      today.setHours(23, 59, 59, 999)
-      if (d > today) errs.birth_date = 'Дата рождения не может быть в будущем'
-    }
-    return errs
-  }
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setGeneralError('')
-    setFieldErrors({})
-    const clientErrs = validate()
-    if (Object.keys(clientErrs).length > 0) {
-      setFieldErrors(clientErrs)
-      setGeneralError('Исправьте выделенные поля')
-      return
-    }
-    setSaving(true)
-    try {
-      await axios.post(`${API}/animals`, {
-        tag_number: form.tag_number.trim(),
-        name: form.name.trim() || null,
-        sex: form.sex,
-        birth_date: form.birth_date || null,
-        breed: form.breed.trim() || 'Калмыцкая',
-        color: form.color.trim() || null,
-        group_id: form.group_id ? Number(form.group_id) : null,
-      })
-      onCreated()
-    } catch (err) {
-      const parsed = parseApiError(err)
-      setFieldErrors(parsed.fields)
-      setGeneralError(parsed.general)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <form className="form-card" onSubmit={submit} noValidate>
-      <h3>Новое животное</h3>
-
-      {generalError && (
-        <div className="form-error">
-          <span className="error-icon">⚠️</span>
-          <span>{generalError}</span>
-        </div>
-      )}
-
-      <div className="form-field">
-        <label>
-          Номер бирки <span className="req">*</span>
-        </label>
-        <input
-          className={fieldErrors.tag_number ? 'has-error' : ''}
-          value={form.tag_number}
-          onChange={(e) => setForm({ ...form, tag_number: e.target.value })}
-          placeholder="RU-001-2026"
-        />
-        {fieldErrors.tag_number && (
-          <div className="field-error">{fieldErrors.tag_number}</div>
-        )}
-      </div>
-
-      <div className="form-row">
-        <div className="form-field">
-          <label>Кличка</label>
-          <input
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-          />
-        </div>
-        <div className="form-field">
-          <label>
-            Пол <span className="req">*</span>
-          </label>
-          <select
-            value={form.sex}
-            onChange={(e) => setForm({ ...form, sex: e.target.value })}
-          >
-            <option value="female">Корова (♀)</option>
-            <option value="male">Бык (♂)</option>
-          </select>
-        </div>
-      </div>
-
-      <div className="form-row">
-        <div className="form-field">
-          <label>Дата рождения</label>
-          <input
-            type="date"
-            className={fieldErrors.birth_date ? 'has-error' : ''}
-            value={form.birth_date}
-            onChange={(e) => setForm({ ...form, birth_date: e.target.value })}
-          />
-          {fieldErrors.birth_date && (
-            <div className="field-error">{fieldErrors.birth_date}</div>
-          )}
-        </div>
-        <div className="form-field">
-          <label>Масть</label>
-          <input
-            value={form.color}
-            onChange={(e) => setForm({ ...form, color: e.target.value })}
-          />
-        </div>
-      </div>
-
-      <div className="form-row">
-        <div className="form-field">
-          <label>Порода</label>
-          <input
-            value={form.breed}
-            onChange={(e) => setForm({ ...form, breed: e.target.value })}
-          />
-        </div>
-        <div className="form-field">
-          <label>Группа</label>
-          <select
-            value={form.group_id}
-            onChange={(e) => setForm({ ...form, group_id: e.target.value })}
-          >
-            <option value="">— без группы —</option>
-            {groups.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      <button type="submit" className="submit-btn" disabled={saving}>
-        {saving ? '⏳ Сохранение…' : '💾 Сохранить'}
-      </button>
-    </form>
-  )
-}
-
-// ============ КАЛЕНДАРЬ ============
-function CalendarTab({
-  vaccinations,
-  animalsById,
-  vaccinesById,
-  onReload,
-}: {
-  vaccinations: Vaccination[]
-  animalsById: Record<number, Animal>
-  vaccinesById: Record<number, Vaccine>
-  onReload: () => void
-}) {
-  const [filter, setFilter] = useState<'upcoming' | 'done' | 'all'>('upcoming')
-
-  const filtered = useMemo(() => {
-    let list = [...vaccinations]
-    if (filter === 'upcoming') list = list.filter((v) => !v.is_done)
-    if (filter === 'done') list = list.filter((v) => v.is_done)
-    return list.sort((a, b) => a.planned_date.localeCompare(b.planned_date))
-  }, [vaccinations, filter])
-
-  const complete = async (vac: Vaccination) => {
-    const actual = prompt(
-      'Дата выполнения (YYYY-MM-DD):',
-      new Date().toISOString().slice(0, 10)
-    )
-    if (!actual) return
-    const vet = prompt('ФИО ветеринара (необязательно):') || null
-    try {
-      await axios.post(`${API}/vaccinations/${vac.id}/complete`, {
-        actual_date: actual,
-        vet_name: vet,
-      })
-      onReload()
-    } catch (err) {
-      alert('Ошибка')
-    }
-  }
-
-  const remove = async (vac: Vaccination) => {
-    if (!confirm('Удалить запись?')) return
-    try {
-      await axios.delete(`${API}/vaccinations/${vac.id}`)
-      onReload()
-    } catch (err) {
-      console.error(err)
-    }
-  }
-
-  return (
-    <div>
-      <div className="filter-row">
-        <button
-          className={filter === 'upcoming' ? 'chip active' : 'chip'}
-          onClick={() => setFilter('upcoming')}
-        >
-          Предстоящие
-        </button>
-        <button
-          className={filter === 'done' ? 'chip active' : 'chip'}
-          onClick={() => setFilter('done')}
-        >
-          Выполненные
-        </button>
-        <button
-          className={filter === 'all' ? 'chip active' : 'chip'}
-          onClick={() => setFilter('all')}
-        >
-          Все
-        </button>
-      </div>
-
-      {filtered.length === 0 && <p className="empty">Нет записей</p>}
-
-      <div className="list">
-        {filtered.map((v) => {
-          const animal = animalsById[v.animal_id]
-          const vaccine = vaccinesById[v.vaccine_id]
-          const days = daysUntil(v.planned_date)
-          const overdue = !v.is_done && days < 0
-          const soon = !v.is_done && days >= 0 && days <= 3
-          return (
-            <div
-              key={v.id}
-              className={`card ${
-                overdue ? 'card-urgent' : soon ? 'card-soon' : ''
-              } ${v.is_done ? 'card-done' : ''}`}
-            >
-              <div className="card-title">
-                <span className="tag">
-                  {animal?.tag_number || `#${v.animal_id}`}
-                </span>
-                {v.is_done ? (
-                  <span className="badge badge-green">✅ выполнено</span>
-                ) : (
-                  <span
-                    className={`badge ${
-                      overdue ? 'badge-red' : soon ? 'badge-orange' : ''
-                    }`}
-                  >
-                    {overdue
-                      ? `просрочено на ${Math.abs(days)} дн.`
-                      : days === 0
-                      ? 'сегодня'
-                      : days === 1
-                      ? 'завтра'
-                      : `через ${days} дн.`}
-                  </span>
-                )}
-              </div>
-              <div className="card-meta">
-                <span>💉 {vaccine?.disease || 'вакцинация'}</span>
-                <span>📅 план: {formatDate(v.planned_date)}</span>
-                {v.actual_date && (
-                  <span>✅ факт: {formatDate(v.actual_date)}</span>
-                )}
-                {v.vet_name && <span>👨‍⚕️ {v.vet_name}</span>}
-              </div>
-              {!v.is_done ? (
-                <button className="complete-btn" onClick={() => complete(v)}>
-                  ✅ Отметить выполненной
-                </button>
-              ) : (
-                <button className="delete-mini-btn" onClick={() => remove(v)}>
-                  🗑 Удалить
-                </button>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
 // ============ МОДАЛКА ЖИВОТНОГО ============
 function AnimalModal({
   animal,
@@ -3148,7 +3169,6 @@ function AnimalModal({
   const [actualDate, setActualDate] = useState('')
   const [vetName, setVetName] = useState('')
 
-  // Продажа
   const [showSellForm, setShowSellForm] = useState(false)
   const [sellForm, setSellForm] = useState({
     category: 'livestock',
@@ -3164,7 +3184,7 @@ function AnimalModal({
 
   const loadEvents = useCallback(async () => {
     try {
-      const { data } = await axios.get<AnimalEvent[]>(
+      const { data } = await api.get<AnimalEvent[]>(
         `${API}/animals/${animal.id}/events`
       )
       setEvents(data)
@@ -3181,7 +3201,7 @@ function AnimalModal({
     setError('')
     setGenerating(true)
     try {
-      const { data } = await axios.post(
+      const { data } = await api.post(
         `${API}/animals/${animal.id}/generate-vaccinations`
       )
       if (data.created === 0) {
@@ -3200,7 +3220,7 @@ function AnimalModal({
   const saveEdit = async () => {
     setSaving(true)
     try {
-      await axios.patch(`${API}/animals/${animal.id}`, {
+      await api.patch(`${API}/animals/${animal.id}`, {
         name: editForm.name.trim() || null,
         color: editForm.color.trim() || null,
         group_id: editForm.group_id ? Number(editForm.group_id) : null,
@@ -3219,7 +3239,7 @@ function AnimalModal({
   const deleteAnimal = async () => {
     if (!confirm(`Удалить животное ${animal.tag_number}?`)) return
     try {
-      await axios.delete(`${API}/animals/${animal.id}`)
+      await api.delete(`${API}/animals/${animal.id}`)
       onDeleted()
     } catch (err) {
       alert('Не удалось удалить')
@@ -3229,7 +3249,7 @@ function AnimalModal({
   const submitEvent = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
-      await axios.post(`${API}/events`, {
+      await api.post(`${API}/events`, {
         animal_id: animal.id,
         event_type: eventForm.event_type,
         event_date: eventForm.event_date,
@@ -3253,7 +3273,7 @@ function AnimalModal({
     if (!actualDate) return
     setSaving(true)
     try {
-      await axios.post(`${API}/vaccinations/${completeVac.id}/complete`, {
+      await api.post(`${API}/vaccinations/${completeVac.id}/complete`, {
         actual_date: actualDate,
         vet_name: vetName.trim() || null,
       })
@@ -3301,7 +3321,7 @@ function AnimalModal({
 
     setSelling(true)
     try {
-      await axios.post(`${API}/incomes`, {
+      await api.post(`${API}/incomes`, {
         category: sellForm.category,
         amount: Number(sellForm.amount),
         income_date: sellForm.income_date,
@@ -3447,7 +3467,6 @@ function AnimalModal({
                 </div>
               </div>
 
-              {/* Форма продажи */}
               {showSellForm && (
                 <form className="sell-form" onSubmit={submitSell} noValidate>
                   <h4>
