@@ -1,14 +1,35 @@
 import { useState } from 'react'
+import {
+  Beef,
+  Building2,
+  Users,
+  LogIn,
+  ChevronLeft,
+  Eye,
+  EyeOff,
+  AlertCircle,
+  Crown,
+  Stethoscope,
+  ClipboardList,
+  HardHat,
+} from 'lucide-react'
 import { useAuth } from './AuthContext'
 import type { UserRole } from './AuthContext'
 
 type Mode = 'welcome' | 'login' | 'register-farm' | 'register-join'
 
 const ROLE_LABELS: Record<UserRole, string> = {
-  owner: '👑 Владелец',
-  vet: '🩺 Ветеринар',
-  zootechnik: '📊 Зоотехник',
-  worker: '👷 Работник',
+  owner: 'Владелец',
+  vet: 'Ветеринар',
+  zootechnik: 'Зоотехник',
+  worker: 'Работник',
+}
+
+const ROLE_ICONS: Record<UserRole, React.ComponentType<{ size?: number }>> = {
+  owner: Crown,
+  vet: Stethoscope,
+  zootechnik: ClipboardList,
+  worker: HardHat,
 }
 
 export default function AuthScreen() {
@@ -30,16 +51,18 @@ export default function AuthScreen() {
   )
 }
 
-// ============ WELCOME ============
 function Welcome({ onPick }: { onPick: (m: Mode) => void }) {
   return (
     <>
-      <div className="auth-logo">🐄</div>
+      <div className="auth-logo">
+        <Beef size={28} />
+      </div>
       <h1 className="auth-title">Моё поголовье</h1>
       <p className="auth-subtitle">Учёт скота, вакцинаций и финансов</p>
 
       <div className="auth-actions">
         <button className="auth-btn primary" onClick={() => onPick('login')}>
+          <LogIn size={16} />
           Войти
         </button>
 
@@ -51,20 +74,21 @@ function Welcome({ onPick }: { onPick: (m: Mode) => void }) {
           className="auth-btn secondary"
           onClick={() => onPick('register-farm')}
         >
-          🏡 Создать хозяйство
+          <Building2 size={16} />
+          Создать хозяйство
         </button>
         <button
           className="auth-btn ghost"
           onClick={() => onPick('register-join')}
         >
-          👥 Присоединиться по коду
+          <Users size={16} />
+          Присоединиться по коду
         </button>
       </div>
     </>
   )
 }
 
-// ============ LOGIN ============
 function LoginForm({ onBack }: { onBack: () => void }) {
   const { login } = useAuth()
   const [email, setEmail] = useState('')
@@ -93,12 +117,18 @@ function LoginForm({ onBack }: { onBack: () => void }) {
   return (
     <form onSubmit={submit}>
       <button type="button" className="auth-back" onClick={onBack}>
-        ← Назад
+        <ChevronLeft size={14} />
+        Назад
       </button>
 
       <h2 className="auth-title-sm">Вход</h2>
 
-      {error && <div className="auth-error">{error}</div>}
+      {error && (
+        <div className="auth-error">
+          <AlertCircle size={14} />
+          {error}
+        </div>
+      )}
 
       <div className="auth-field">
         <label>Email</label>
@@ -127,19 +157,18 @@ function LoginForm({ onBack }: { onBack: () => void }) {
             className="auth-eye"
             onClick={() => setShowPass((v) => !v)}
           >
-            {showPass ? '🙈' : '👁'}
+            {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
           </button>
         </div>
       </div>
 
       <button type="submit" className="auth-btn primary" disabled={loading}>
-        {loading ? '⏳ Вход…' : 'Войти'}
+        {loading ? 'Вход…' : 'Войти'}
       </button>
     </form>
   )
 }
 
-// ============ REGISTER FARM ============
 function RegisterFarmForm({ onBack }: { onBack: () => void }) {
   const { registerFarm } = useAuth()
   const [form, setForm] = useState({
@@ -215,14 +244,20 @@ function RegisterFarmForm({ onBack }: { onBack: () => void }) {
   return (
     <form onSubmit={submit}>
       <button type="button" className="auth-back" onClick={onBack}>
-        ← Назад
+        <ChevronLeft size={14} />
+        Назад
       </button>
 
-      <h2 className="auth-title-sm">🏡 Новое хозяйство</h2>
+      <h2 className="auth-title-sm">Новое хозяйство</h2>
 
-      {general && <div className="auth-error">{general}</div>}
+      {general && (
+        <div className="auth-error">
+          <AlertCircle size={14} />
+          {general}
+        </div>
+      )}
 
-      <div className="auth-section">ХОЗЯЙСТВО</div>
+      <div className="auth-section">Хозяйство</div>
 
       <div className="auth-field">
         <label>
@@ -265,7 +300,7 @@ function RegisterFarmForm({ onBack }: { onBack: () => void }) {
         />
       </div>
 
-      <div className="auth-section">ВЛАДЕЛЕЦ</div>
+      <div className="auth-section">Владелец</div>
 
       <div className="auth-field">
         <label>
@@ -337,13 +372,12 @@ function RegisterFarmForm({ onBack }: { onBack: () => void }) {
       </div>
 
       <button type="submit" className="auth-btn primary" disabled={loading}>
-        {loading ? '⏳ Создание…' : '🏡 Создать хозяйство'}
+        {loading ? 'Создание…' : 'Создать хозяйство'}
       </button>
     </form>
   )
 }
 
-// ============ REGISTER JOIN ============
 function RegisterJoinForm({ onBack }: { onBack: () => void }) {
   const { registerJoin } = useAuth()
   const [form, setForm] = useState({
@@ -415,12 +449,18 @@ function RegisterJoinForm({ onBack }: { onBack: () => void }) {
   return (
     <form onSubmit={submit}>
       <button type="button" className="auth-back" onClick={onBack}>
-        ← Назад
+        <ChevronLeft size={14} />
+        Назад
       </button>
 
-      <h2 className="auth-title-sm">👥 Присоединиться</h2>
+      <h2 className="auth-title-sm">Присоединиться</h2>
 
-      {general && <div className="auth-error">{general}</div>}
+      {general && (
+        <div className="auth-error">
+          <AlertCircle size={14} />
+          {general}
+        </div>
+      )}
 
       <div className="auth-field">
         <label>
@@ -441,26 +481,30 @@ function RegisterJoinForm({ onBack }: { onBack: () => void }) {
         </div>
       </div>
 
-      <div className="auth-section">РОЛЬ</div>
+      <div className="auth-section">Роль</div>
 
       <div className="auth-roles">
         {(Object.keys(ROLE_LABELS) as UserRole[])
           .filter((r) => r !== 'owner')
-          .map((role) => (
-            <button
-              key={role}
-              type="button"
-              className={`role-btn ${
-                form.role === role ? 'active' : ''
-              }`}
-              onClick={() => setForm({ ...form, role })}
-            >
-              {ROLE_LABELS[role]}
-            </button>
-          ))}
+          .map((role) => {
+            const RoleIcon = ROLE_ICONS[role]
+            return (
+              <button
+                key={role}
+                type="button"
+                className={`role-btn ${
+                  form.role === role ? 'active' : ''
+                }`}
+                onClick={() => setForm({ ...form, role })}
+              >
+                <RoleIcon size={14} />
+                {ROLE_LABELS[role]}
+              </button>
+            )
+          })}
       </div>
 
-      <div className="auth-section">О СЕБЕ</div>
+      <div className="auth-section">О себе</div>
 
       <div className="auth-field">
         <label>
@@ -532,7 +576,7 @@ function RegisterJoinForm({ onBack }: { onBack: () => void }) {
       </div>
 
       <button type="submit" className="auth-btn primary" disabled={loading}>
-        {loading ? '⏳ Присоединение…' : '👥 Присоединиться'}
+        {loading ? 'Присоединение…' : 'Присоединиться'}
       </button>
     </form>
   )

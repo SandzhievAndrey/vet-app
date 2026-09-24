@@ -1,15 +1,37 @@
-import { useState, useMemo } from 'react'
+import { useState, useEffect } from 'react'
+import {
+  User as UserIcon,
+  Home,
+  Key,
+  Users,
+  Lock,
+  LogOut,
+  Copy,
+  Share2,
+  Check,
+  Pencil,
+  X,
+  AlertCircle,
+  CheckCircle2,
+  Crown,
+  Stethoscope,
+  ClipboardList,
+  HardHat,
+} from 'lucide-react'
 import { api } from './api'
 import { useAuth } from './AuthContext'
 import type { User, Farm } from './AuthContext'
 
 type Section = 'personal' | 'farm' | 'password'
 
-const ROLE_LABELS: Record<string, string> = {
-  owner: '👑 Владелец',
-  vet: '🩺 Ветеринар',
-  zootechnik: '📊 Зоотехник',
-  worker: '👷 Работник',
+const ROLE_META: Record<
+  string,
+  { label: string; Icon: React.ComponentType<{ size?: number }> }
+> = {
+  owner: { label: 'Владелец', Icon: Crown },
+  vet: { label: 'Ветеринар', Icon: Stethoscope },
+  zootechnik: { label: 'Зоотехник', Icon: ClipboardList },
+  worker: { label: 'Работник', Icon: HardHat },
 }
 
 export default function ProfileTab() {
@@ -18,9 +40,11 @@ export default function ProfileTab() {
 
   if (!user || !farm) return null
 
+  const roleMeta = ROLE_META[user.role] || { label: user.role, Icon: UserIcon }
+  const RoleIcon = roleMeta.Icon
+
   return (
     <div>
-      {/* === Шапка профиля === */}
       <div className="prof-header">
         <div className="prof-avatar">
           {user.full_name?.[0]?.toUpperCase() || '?'}
@@ -30,21 +54,36 @@ export default function ProfileTab() {
           {user.nickname && (
             <div className="prof-nick">@{user.nickname}</div>
           )}
-          <div className="prof-role">{ROLE_LABELS[user.role] || user.role}</div>
+          <div className="prof-role">
+            <RoleIcon size={12} />
+            {roleMeta.label}
+          </div>
         </div>
       </div>
 
-      {/* === Личные данные === */}
       <div className="prof-card">
         <div className="prof-card-head">
-          <h3>📋 Личные данные</h3>
+          <h3>
+            <UserIcon size={16} />
+            Личные данные
+          </h3>
           <button
             className="prof-edit-btn"
             onClick={() =>
               setSection(section === 'personal' ? null : 'personal')
             }
           >
-            {section === 'personal' ? '✕' : '✏️ Изменить'}
+            {section === 'personal' ? (
+              <>
+                <X size={12} />
+                Отмена
+              </>
+            ) : (
+              <>
+                <Pencil size={12} />
+                Изменить
+              </>
+            )}
           </button>
         </div>
 
@@ -85,16 +124,28 @@ export default function ProfileTab() {
         )}
       </div>
 
-      {/* === Хозяйство === */}
       <div className="prof-card">
         <div className="prof-card-head">
-          <h3>🏡 Хозяйство</h3>
+          <h3>
+            <Home size={16} />
+            Хозяйство
+          </h3>
           {user.role === 'owner' && (
             <button
               className="prof-edit-btn"
               onClick={() => setSection(section === 'farm' ? null : 'farm')}
             >
-              {section === 'farm' ? '✕' : '✏️ Изменить'}
+              {section === 'farm' ? (
+                <>
+                  <X size={12} />
+                  Отмена
+                </>
+              ) : (
+                <>
+                  <Pencil size={12} />
+                  Изменить
+                </>
+              )}
             </button>
           )}
         </div>
@@ -132,13 +183,10 @@ export default function ProfileTab() {
         )}
       </div>
 
-      {/* === Код приглашения === */}
       <InviteCard inviteCode={farm.invite_code} />
 
-      {/* === Команда === */}
       <TeamCard />
 
-      {/* === Действия === */}
       <div className="prof-actions">
         <button
           className="prof-action-btn"
@@ -146,7 +194,8 @@ export default function ProfileTab() {
             setSection(section === 'password' ? null : 'password')
           }
         >
-          🔒 {section === 'password' ? 'Отмена' : 'Сменить пароль'}
+          <Lock size={16} />
+          {section === 'password' ? 'Отмена' : 'Сменить пароль'}
         </button>
 
         {section === 'password' && (
@@ -154,14 +203,14 @@ export default function ProfileTab() {
         )}
 
         <button className="prof-action-btn danger" onClick={logout}>
-          🚪 Выйти из аккаунта
+          <LogOut size={16} />
+          Выйти из аккаунта
         </button>
       </div>
     </div>
   )
 }
 
-// ============ ФОРМА ЛИЧНЫХ ДАННЫХ ============
 function PersonalForm({
   user,
   onSave,
@@ -205,7 +254,12 @@ function PersonalForm({
 
   return (
     <form onSubmit={submit} className="prof-form">
-      {error && <div className="form-error">{error}</div>}
+      {error && (
+        <div className="form-error">
+          <AlertCircle size={14} />
+          <span>{error}</span>
+        </div>
+      )}
 
       <div className="form-field">
         <label>ФИО</label>
@@ -250,14 +304,13 @@ function PersonalForm({
           Отмена
         </button>
         <button type="submit" className="btn-save" disabled={saving}>
-          {saving ? '⏳…' : '💾 Сохранить'}
+          {saving ? '…' : 'Сохранить'}
         </button>
       </div>
     </form>
   )
 }
 
-// ============ ФОРМА ХОЗЯЙСТВА ============
 function FarmForm({
   farm,
   onSave,
@@ -301,7 +354,12 @@ function FarmForm({
 
   return (
     <form onSubmit={submit} className="prof-form">
-      {error && <div className="form-error">{error}</div>}
+      {error && (
+        <div className="form-error">
+          <AlertCircle size={14} />
+          <span>{error}</span>
+        </div>
+      )}
 
       <div className="form-field">
         <label>Название</label>
@@ -344,14 +402,13 @@ function FarmForm({
           Отмена
         </button>
         <button type="submit" className="btn-save" disabled={saving}>
-          {saving ? '⏳…' : '💾 Сохранить'}
+          {saving ? '…' : 'Сохранить'}
         </button>
       </div>
     </form>
   )
 }
 
-// ============ КОД ПРИГЛАШЕНИЯ ============
 function InviteCard({ inviteCode }: { inviteCode: string }) {
   const [copied, setCopied] = useState(false)
 
@@ -383,7 +440,10 @@ function InviteCard({ inviteCode }: { inviteCode: string }) {
   return (
     <div className="prof-card invite-card">
       <div className="prof-card-head">
-        <h3>🔑 Код приглашения</h3>
+        <h3>
+          <Key size={16} />
+          Код приглашения
+        </h3>
       </div>
 
       <div className="invite-code">{inviteCode}</div>
@@ -395,22 +455,32 @@ function InviteCard({ inviteCode }: { inviteCode: string }) {
 
       <div className="invite-actions">
         <button className="prof-action-btn" onClick={copy}>
-          {copied ? '✅ Скопировано' : '📋 Скопировать'}
+          {copied ? (
+            <>
+              <Check size={16} />
+              Скопировано
+            </>
+          ) : (
+            <>
+              <Copy size={16} />
+              Скопировать
+            </>
+          )}
         </button>
         <button className="prof-action-btn" onClick={share}>
-          📤 Поделиться
+          <Share2 size={16} />
+          Поделиться
         </button>
       </div>
     </div>
   )
 }
 
-// ============ КОМАНДА ============
 function TeamCard() {
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
 
-  useMemo(() => {
+  useEffect(() => {
     const load = async () => {
       try {
         const { data } = await api.get<User[]>('/farm/users')
@@ -427,7 +497,10 @@ function TeamCard() {
   return (
     <div className="prof-card">
       <div className="prof-card-head">
-        <h3>👥 Команда ({users.length})</h3>
+        <h3>
+          <Users size={16} />
+          Команда ({users.length})
+        </h3>
       </div>
 
       {loading && <p className="empty-small">Загрузка…</p>}
@@ -437,28 +510,32 @@ function TeamCard() {
       )}
 
       <div className="team-list">
-        {users.map((u) => (
-          <div key={u.id} className="team-row">
-            <div className="team-avatar">
-              {u.full_name?.[0]?.toUpperCase() || '?'}
-            </div>
-            <div className="team-info">
-              <div className="team-name">
-                {u.full_name}
-                {u.nickname && <span className="team-nick"> @{u.nickname}</span>}
+        {users.map((u) => {
+          const roleMeta = ROLE_META[u.role] || { label: u.role, Icon: UserIcon }
+          const RoleIcon = roleMeta.Icon
+          return (
+            <div key={u.id} className="team-row">
+              <div className="team-avatar">
+                {u.full_name?.[0]?.toUpperCase() || '?'}
               </div>
-              <div className="team-role">
-                {ROLE_LABELS[u.role] || u.role}
+              <div className="team-info">
+                <div className="team-name">
+                  {u.full_name}
+                  {u.nickname && <span className="team-nick"> @{u.nickname}</span>}
+                </div>
+                <div className="team-role">
+                  <RoleIcon size={11} />
+                  {roleMeta.label}
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
 }
 
-// ============ СМЕНА ПАРОЛЯ ============
 function ChangePasswordForm({ onSave }: { onSave: () => void }) {
   const [form, setForm] = useState({
     old_password: '',
@@ -516,9 +593,17 @@ function ChangePasswordForm({ onSave }: { onSave: () => void }) {
 
   return (
     <form onSubmit={submit} className="prof-form">
-      {general && <div className="form-error">{general}</div>}
+      {general && (
+        <div className="form-error">
+          <AlertCircle size={14} />
+          <span>{general}</span>
+        </div>
+      )}
       {success && (
-        <div className="gv-success">✅ Пароль изменён</div>
+        <div className="gv-success">
+          <CheckCircle2 size={16} />
+          <span>Пароль изменён</span>
+        </div>
       )}
 
       <div className="form-field">
@@ -570,7 +655,7 @@ function ChangePasswordForm({ onSave }: { onSave: () => void }) {
           Отмена
         </button>
         <button type="submit" className="btn-save" disabled={saving}>
-          {saving ? '⏳…' : '🔒 Сменить пароль'}
+          {saving ? '…' : 'Сменить пароль'}
         </button>
       </div>
     </form>
