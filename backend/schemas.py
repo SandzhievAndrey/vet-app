@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
 
 
 # === Animal ===
@@ -196,3 +196,96 @@ class IncomeResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+
+# ==================== АВТОРИЗАЦИЯ ====================
+
+class FarmRegister(BaseModel):
+    farm_name: str = Field(..., min_length=2, max_length=200)
+    region: Optional[str] = None
+    district: Optional[str] = None
+    inn: Optional[str] = None
+
+    email: EmailStr
+    password: str = Field(..., min_length=6, max_length=100)
+    full_name: str = Field(..., min_length=2, max_length=200)
+    nickname: Optional[str] = None
+    phone: Optional[str] = None
+    birth_date: Optional[date] = None
+
+
+class UserJoin(BaseModel):
+    invite_code: str = Field(..., min_length=6, max_length=20)
+    role: str = "worker"
+
+    email: EmailStr
+    password: str = Field(..., min_length=6, max_length=100)
+    full_name: str = Field(..., min_length=2, max_length=200)
+    nickname: Optional[str] = None
+    phone: Optional[str] = None
+    birth_date: Optional[date] = None
+
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class UserResponse(BaseModel):
+    id: int
+    email: str
+    full_name: str
+    nickname: Optional[str] = None
+    phone: Optional[str] = None
+    birth_date: Optional[date] = None
+    avatar_url: Optional[str] = None
+    role: str
+    farm_id: int
+    settings: Optional[str] = None
+    created_at: datetime
+    last_login_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class FarmResponse(BaseModel):
+    id: int
+    name: str
+    region: Optional[str] = None
+    district: Optional[str] = None
+    inn: Optional[str] = None
+    invite_code: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AuthResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse
+    farm: FarmResponse
+
+
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = None
+    nickname: Optional[str] = None
+    phone: Optional[str] = None
+    birth_date: Optional[date] = None
+    avatar_url: Optional[str] = None
+    settings: Optional[str] = None
+
+
+class FarmUpdate(BaseModel):
+    name: Optional[str] = None
+    region: Optional[str] = None
+    district: Optional[str] = None
+    inn: Optional[str] = None
+
+
+class ChangePassword(BaseModel):
+    old_password: str
+    new_password: str = Field(..., min_length=6, max_length=100)

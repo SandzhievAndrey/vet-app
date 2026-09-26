@@ -10,9 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from models import (
-    SessionLocal, Animal, Group, Vaccine, Vaccination, AnimalEvent,
-    Expense, Income,
-    AnimalStatus, Sex, ExpenseCategory, IncomeCategory
+    Animal, Group, Vaccine, Vaccination, AnimalEvent,
+    Expense, Income, User, Farm,
+    AnimalStatus, Sex, ExpenseCategory, IncomeCategory, UserRole,
 )
 from schemas import (
     AnimalCreate, AnimalUpdate, AnimalResponse,
@@ -24,6 +24,14 @@ from schemas import (
     GroupAssignRequest,
     ExpenseCreate, ExpenseResponse,
     IncomeCreate, IncomeResponse,
+    FarmRegister, UserJoin, UserLogin,
+    UserResponse, FarmResponse, AuthResponse,
+    UserUpdate, FarmUpdate, ChangePassword,
+)
+from database import get_db
+from auth import (
+    hash_password, verify_password, create_access_token,
+    generate_invite_code, get_current_user, require_role,
 )
 from vaccination_schedule import (
     generate_schedule_for_animal,
@@ -56,6 +64,10 @@ FIELD_NAMES = {
     "category": "Категория", "amount": "Сумма", "expense_date": "Дата расхода",
     "income_date": "Дата дохода", "quantity": "Количество", "weight_kg": "Вес",
     "disease": "Болезнь",
+    "email": "Email", "password": "Пароль", "full_name": "ФИО",
+    "nickname": "Никнейм", "phone": "Телефон", "farm_name": "Название хозяйства",
+    "invite_code": "Код приглашения", "region": "Регион", "district": "Район",
+    "inn": "ИНН", "role": "Роль",
 }
 
 
@@ -72,6 +84,8 @@ async def validation_handler(request, exc: RequestValidationError):
             msg = "Обязательное поле"
         elif "not a valid date" in msg.lower() or "date_from_datetime_parsing" in etype:
             msg = "Неверный формат даты"
+        elif "value is not a valid email" in msg.lower():
+            msg = "Неверный формат email"
         elif "not a valid integer" in msg.lower() or "int_parsing" in etype:
             msg = "Должно быть целое число"
         elif "not a valid number" in msg.lower() or "float_parsing" in etype:
@@ -90,12 +104,233 @@ async def validation_handler(request, exc: RequestValidationError):
     )
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# ==================== HELPERS ====================
+
+def get_owned_animal(animal_id: int, user: User, db: Session) -> Animal:
+    animal = (
+        db.query(Animal)
+        .filter(Animal.id == animal_id, Animal.farm_id == user.farm_id)
+        .first()
+    )
+    if not animal:
+        raise HTTPException(status_code=404, detail="Животное не найдено")
+    return animal
+
+
+def get_owned_group(group_id: int, user: User, db: Session) -> Group:
+    group = (
+        db.query(Group)
+        .filter(Group.id == group_id, Group.farm_id == user.farm_id)
+        .first()
+    )
+    if not group:
+        raise HTTPException(status_code=404, detail="Группа не найдена")
+    return group
+
+
+# ==================== АВТОРИЗАЦИЯ ====================
+
+@app.post("/api/auth/register-farm", response_model=AuthResponse, status_code=201)
+def register_farm(data: FarmRegister, db: Session = Depends(get_db)):
+    errors = {}
+
+    existing = db.query(User).filter(User.email == data.email.lower()).first()
+    if existing:
+        errors["email"] = "Этот email уже зарегистрирован"
+
+    if errors:
+        raise HTTPException(status_code=400, detail={"message": "Проверьте поля формы", "errors": errors})
+
+    invite_code = generate_invite_code()
+    for _ in range(5):
+        if not db.query(Farm).filter(Farm.invite_code == invite_code).first():
+            break
+        invite_code = generate_invite_code()
+
+    farm = Farm(
+        name=data.farm_name.strip(),
+        region=data.region.strip() if data.region else None,
+        district=data.district.strip() if data.district else None,
+        inn=data.inn.strip() if data.inn else None,
+        invite_code=invite_code,
+    )
+    db.add(farm)
+    db.flush()
+
+    user = User(
+        email=data.email.lower(),
+        password_hash=hash_password(data.password),
+        full_name=data.full_name.strip(),
+        nickname=data.nickname.strip() if data.nickname else None,
+        phone=data.phone.strip() if data.phone else None,
+        birth_date=data.birth_date,
+        role=UserRole.OWNER,
+        farm_id=farm.id,
+        settings='{"theme":"auto","units":"kg","notifications":true}',
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    db.refresh(farm)
+
+    token = create_access_token(user.id)
+    return AuthResponse(
+        access_token=token,
+        user=UserResponse.model_validate(user, from_attributes=True),
+        farm=FarmResponse.model_validate(farm, from_attributes=True),
+    )
+
+
+@app.post("/api/auth/register-join", response_model=AuthResponse, status_code=201)
+def register_join(data: UserJoin, db: Session = Depends(get_db)):
+    errors = {}
+
+    existing = db.query(User).filter(User.email == data.email.lower()).first()
+    if existing:
+        errors["email"] = "Этот email уже зарегистрирован"
+
+    farm = db.query(Farm).filter(Farm.invite_code == data.invite_code.strip().upper()).first()
+    if not farm:
+        errors["invite_code"] = "Неверный код приглашения"
+
+    if data.role not in [r.value for r in UserRole]:
+        errors["role"] = "Неверная роль"
+
+    if errors:
+        raise HTTPException(status_code=400, detail={"message": "Проверьте поля формы", "errors": errors})
+
+    user = User(
+        email=data.email.lower(),
+        password_hash=hash_password(data.password),
+        full_name=data.full_name.strip(),
+        nickname=data.nickname.strip() if data.nickname else None,
+        phone=data.phone.strip() if data.phone else None,
+        birth_date=data.birth_date,
+        role=UserRole(data.role),
+        farm_id=farm.id,
+        settings='{"theme":"auto","units":"kg","notifications":true}',
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    db.refresh(farm)
+
+    token = create_access_token(user.id)
+    return AuthResponse(
+        access_token=token,
+        user=UserResponse.model_validate(user, from_attributes=True),
+        farm=FarmResponse.model_validate(farm, from_attributes=True),
+    )
+
+
+@app.post("/api/auth/login", response_model=AuthResponse)
+def login(data: UserLogin, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == data.email.lower()).first()
+    if not user or not verify_password(data.password, user.password_hash):
+        raise HTTPException(
+            status_code=401,
+            detail={"message": "Неверный email или пароль", "errors": {}},
+        )
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Аккаунт деактивирован")
+
+    user.last_login_at = datetime.now()
+    db.commit()
+    db.refresh(user)
+
+    farm = db.query(Farm).filter(Farm.id == user.farm_id).first()
+
+    token = create_access_token(user.id)
+    return AuthResponse(
+        access_token=token,
+        user=UserResponse.model_validate(user, from_attributes=True),
+        farm=FarmResponse.model_validate(farm, from_attributes=True),
+    )
+
+
+@app.get("/api/auth/me", response_model=AuthResponse)
+def get_me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    farm = db.query(Farm).filter(Farm.id == current_user.farm_id).first()
+    return AuthResponse(
+        access_token="",
+        user=UserResponse.model_validate(current_user, from_attributes=True),
+        farm=FarmResponse.model_validate(farm, from_attributes=True),
+    )
+
+
+# ==================== ПРОФИЛЬ ====================
+
+@app.patch("/api/profile", response_model=UserResponse)
+def update_profile(
+    data: UserUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    errors = {}
+    if data.full_name is not None and len(data.full_name.strip()) < 2:
+        errors["full_name"] = "ФИО слишком короткое"
+    if errors:
+        raise HTTPException(status_code=400, detail={"message": "Проверьте поля формы", "errors": errors})
+
+    for field, value in data.model_dump(exclude_unset=True).items():
+        if isinstance(value, str):
+            value = value.strip() or None
+        setattr(current_user, field, value)
+
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+
+
+@app.post("/api/profile/change-password")
+def change_password(
+    data: ChangePassword,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not verify_password(data.old_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Неверный текущий пароль", "errors": {"old_password": "Пароль не совпадает"}},
+        )
+    current_user.password_hash = hash_password(data.new_password)
+    db.commit()
+    return {"status": "ok"}
+
+
+# ==================== ХОЗЯЙСТВО ====================
+
+@app.patch("/api/farm", response_model=FarmResponse)
+def update_farm(
+    data: FarmUpdate,
+    current_user: User = Depends(require_role("owner")),
+    db: Session = Depends(get_db),
+):
+    farm = db.query(Farm).filter(Farm.id == current_user.farm_id).first()
+    if not farm:
+        raise HTTPException(status_code=404, detail="Хозяйство не найдено")
+
+    for field, value in data.model_dump(exclude_unset=True).items():
+        if isinstance(value, str):
+            value = value.strip() or None
+        setattr(farm, field, value)
+
+    db.commit()
+    db.refresh(farm)
+    return farm
+
+
+@app.get("/api/farm/users", response_model=list[UserResponse])
+def list_farm_users(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(User)
+        .filter(User.farm_id == current_user.farm_id, User.is_active == True)
+        .order_by(User.role, User.full_name)
+        .all()
+    )
 
 
 # ==================== ANIMALS ====================
@@ -104,9 +339,10 @@ def get_db():
 def list_animals(
     status: Optional[str] = None,
     group_id: Optional[int] = None,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Animal)
+    q = db.query(Animal).filter(Animal.farm_id == current_user.farm_id)
     if status:
         q = q.filter(Animal.status == status)
     if group_id:
@@ -115,7 +351,11 @@ def list_animals(
 
 
 @app.post("/api/animals", response_model=AnimalResponse, status_code=201)
-def create_animal(data: AnimalCreate, db: Session = Depends(get_db)):
+def create_animal(
+    data: AnimalCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     errors = {}
     tag = data.tag_number.strip()
 
@@ -126,14 +366,22 @@ def create_animal(data: AnimalCreate, db: Session = Depends(get_db)):
     elif len(tag) > 50:
         errors["tag_number"] = "Номер бирки слишком длинный (максимум 50 символов)"
     else:
-        existing = db.query(Animal).filter(Animal.tag_number == tag).first()
+        existing = (
+            db.query(Animal)
+            .filter(Animal.tag_number == tag, Animal.farm_id == current_user.farm_id)
+            .first()
+        )
         if existing:
-            errors["tag_number"] = f"Бирка {tag} уже используется другим животным"
+            errors["tag_number"] = f"Бирка {tag} уже используется в вашем хозяйстве"
 
     if data.chip_number:
         chip = data.chip_number.strip()
         if chip:
-            chip_existing = db.query(Animal).filter(Animal.chip_number == chip).first()
+            chip_existing = (
+                db.query(Animal)
+                .filter(Animal.chip_number == chip, Animal.farm_id == current_user.farm_id)
+                .first()
+            )
             if chip_existing:
                 errors["chip_number"] = f"Чип {chip} уже используется"
 
@@ -152,7 +400,11 @@ def create_animal(data: AnimalCreate, db: Session = Depends(get_db)):
         errors["name"] = "Кличка слишком длинная (максимум 100 символов)"
 
     if data.group_id:
-        group = db.query(Group).filter(Group.id == data.group_id).first()
+        group = (
+            db.query(Group)
+            .filter(Group.id == data.group_id, Group.farm_id == current_user.farm_id)
+            .first()
+        )
         if not group:
             errors["group_id"] = f"Группа #{data.group_id} не найдена"
 
@@ -160,6 +412,7 @@ def create_animal(data: AnimalCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail={"message": "Проверьте поля формы", "errors": errors})
 
     animal = Animal(
+        farm_id=current_user.farm_id,
         tag_number=tag,
         chip_number=data.chip_number.strip() if data.chip_number else None,
         name=data.name.strip() if data.name else None,
@@ -179,32 +432,36 @@ def create_animal(data: AnimalCreate, db: Session = Depends(get_db)):
 
 
 @app.get("/api/animals/{animal_id}", response_model=AnimalResponse)
-def get_animal(animal_id: int, db: Session = Depends(get_db)):
-    animal = db.query(Animal).filter(Animal.id == animal_id).first()
-    if not animal:
-        raise HTTPException(status_code=404, detail="Животное не найдено")
-    return animal
+def get_animal(
+    animal_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return get_owned_animal(animal_id, current_user, db)
 
 
 @app.patch("/api/animals/{animal_id}", response_model=AnimalResponse)
-def update_animal(animal_id: int, data: AnimalUpdate, db: Session = Depends(get_db)):
-    animal = db.query(Animal).filter(Animal.id == animal_id).first()
-    if not animal:
-        raise HTTPException(status_code=404, detail="Животное не найдено")
+def update_animal(
+    animal_id: int,
+    data: AnimalUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    animal = get_owned_animal(animal_id, current_user, db)
 
     errors = {}
-
     if data.name is not None and len(data.name) > 100:
         errors["name"] = "Кличка слишком длинная (максимум 100 символов)"
-
     if data.color is not None and len(data.color) > 50:
         errors["color"] = "Масть слишком длинная"
-
     if data.group_id is not None:
-        group = db.query(Group).filter(Group.id == data.group_id).first()
+        group = (
+            db.query(Group)
+            .filter(Group.id == data.group_id, Group.farm_id == current_user.farm_id)
+            .first()
+        )
         if not group:
             errors["group_id"] = f"Группа #{data.group_id} не найдена"
-
     if data.status is not None and data.status not in ("active", "sold", "dead", "slaughtered"):
         errors["status"] = "Неверный статус"
 
@@ -214,9 +471,7 @@ def update_animal(animal_id: int, data: AnimalUpdate, db: Session = Depends(get_
     for field, value in data.model_dump(exclude_unset=True).items():
         if field == "status" and value:
             value = AnimalStatus(value)
-        if field == "name" and value:
-            value = value.strip()
-        if field == "color" and value:
+        if field in ("name", "color") and value:
             value = value.strip()
         setattr(animal, field, value)
 
@@ -226,10 +481,12 @@ def update_animal(animal_id: int, data: AnimalUpdate, db: Session = Depends(get_
 
 
 @app.delete("/api/animals/{animal_id}", status_code=204)
-def delete_animal(animal_id: int, db: Session = Depends(get_db)):
-    animal = db.query(Animal).filter(Animal.id == animal_id).first()
-    if not animal:
-        raise HTTPException(status_code=404, detail="Животное не найдено")
+def delete_animal(
+    animal_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    animal = get_owned_animal(animal_id, current_user, db)
     db.delete(animal)
     db.commit()
 
@@ -237,12 +494,24 @@ def delete_animal(animal_id: int, db: Session = Depends(get_db)):
 # ==================== GROUPS ====================
 
 @app.get("/api/groups", response_model=list[GroupResponse])
-def list_groups(db: Session = Depends(get_db)):
-    return db.query(Group).order_by(Group.name).all()
+def list_groups(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(Group)
+        .filter(Group.farm_id == current_user.farm_id)
+        .order_by(Group.name)
+        .all()
+    )
 
 
 @app.post("/api/groups", response_model=GroupResponse, status_code=201)
-def create_group(data: GroupCreate, db: Session = Depends(get_db)):
+def create_group(
+    data: GroupCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     errors = {}
     name = data.name.strip()
 
@@ -251,14 +520,22 @@ def create_group(data: GroupCreate, db: Session = Depends(get_db)):
     elif len(name) > 100:
         errors["name"] = "Название слишком длинное"
     else:
-        existing = db.query(Group).filter(Group.name == name).first()
+        existing = (
+            db.query(Group)
+            .filter(Group.name == name, Group.farm_id == current_user.farm_id)
+            .first()
+        )
         if existing:
             errors["name"] = f"Группа «{name}» уже существует"
 
     if errors:
         raise HTTPException(status_code=400, detail={"message": "Проверьте поля формы", "errors": errors})
 
-    group = Group(name=name, description=data.description)
+    group = Group(
+        farm_id=current_user.farm_id,
+        name=name,
+        description=data.description,
+    )
     db.add(group)
     db.commit()
     db.refresh(group)
@@ -266,13 +543,15 @@ def create_group(data: GroupCreate, db: Session = Depends(get_db)):
 
 
 @app.patch("/api/groups/{group_id}", response_model=GroupResponse)
-def update_group(group_id: int, data: GroupUpdate, db: Session = Depends(get_db)):
-    group = db.query(Group).filter(Group.id == group_id).first()
-    if not group:
-        raise HTTPException(status_code=404, detail="Группа не найдена")
+def update_group(
+    group_id: int,
+    data: GroupUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    group = get_owned_group(group_id, current_user, db)
 
     errors = {}
-
     if data.name is not None:
         name = data.name.strip()
         if not name:
@@ -280,7 +559,15 @@ def update_group(group_id: int, data: GroupUpdate, db: Session = Depends(get_db)
         elif len(name) > 100:
             errors["name"] = "Название слишком длинное"
         else:
-            existing = db.query(Group).filter(Group.name == name, Group.id != group_id).first()
+            existing = (
+                db.query(Group)
+                .filter(
+                    Group.name == name,
+                    Group.id != group_id,
+                    Group.farm_id == current_user.farm_id,
+                )
+                .first()
+            )
             if existing:
                 errors["name"] = f"Группа «{name}» уже существует"
 
@@ -298,11 +585,12 @@ def update_group(group_id: int, data: GroupUpdate, db: Session = Depends(get_db)
 
 
 @app.delete("/api/groups/{group_id}", status_code=204)
-def delete_group(group_id: int, db: Session = Depends(get_db)):
-    group = db.query(Group).filter(Group.id == group_id).first()
-    if not group:
-        raise HTTPException(status_code=404, detail="Группа не найдена")
-
+def delete_group(
+    group_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    group = get_owned_group(group_id, current_user, db)
     db.query(Animal).filter(Animal.group_id == group_id).update({Animal.group_id: None})
     db.delete(group)
     db.commit()
@@ -311,12 +599,19 @@ def delete_group(group_id: int, db: Session = Depends(get_db)):
 # ==================== VACCINES ====================
 
 @app.get("/api/vaccines", response_model=list[VaccineResponse])
-def list_vaccines(db: Session = Depends(get_db)):
+def list_vaccines(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     return db.query(Vaccine).all()
 
 
 @app.post("/api/vaccines", response_model=VaccineResponse, status_code=201)
-def create_vaccine(data: VaccineCreate, db: Session = Depends(get_db)):
+def create_vaccine(
+    data: VaccineCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     errors = {}
     name = data.name.strip()
 
@@ -341,7 +636,7 @@ def create_vaccine(data: VaccineCreate, db: Session = Depends(get_db)):
 
 
 @app.get("/api/vaccination-schemes")
-def get_schemes():
+def get_schemes(current_user: User = Depends(get_current_user)):
     return VACCINATION_SCHEMES
 
 
@@ -353,9 +648,14 @@ def list_vaccinations(
     upcoming_days: Optional[int] = Query(None),
     animal_id: Optional[int] = None,
     include_inactive: bool = False,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Vaccination).join(Animal, Vaccination.animal_id == Animal.id)
+    q = (
+        db.query(Vaccination)
+        .join(Animal, Vaccination.animal_id == Animal.id)
+        .filter(Animal.farm_id == current_user.farm_id)
+    )
 
     if not include_inactive:
         q = q.filter(Animal.status == AnimalStatus.ACTIVE)
@@ -372,10 +672,18 @@ def list_vaccinations(
 
 
 @app.post("/api/vaccinations", response_model=VaccinationResponse, status_code=201)
-def create_vaccination(data: VaccinationCreate, db: Session = Depends(get_db)):
+def create_vaccination(
+    data: VaccinationCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     errors = {}
 
-    animal = db.query(Animal).filter(Animal.id == data.animal_id).first()
+    animal = (
+        db.query(Animal)
+        .filter(Animal.id == data.animal_id, Animal.farm_id == current_user.farm_id)
+        .first()
+    )
     if not animal:
         errors["animal_id"] = f"Животное #{data.animal_id} не найдено"
 
@@ -394,8 +702,18 @@ def create_vaccination(data: VaccinationCreate, db: Session = Depends(get_db)):
 
 
 @app.patch("/api/vaccinations/{vac_id}", response_model=VaccinationResponse)
-def update_vaccination(vac_id: int, data: dict, db: Session = Depends(get_db)):
-    vac = db.query(Vaccination).filter(Vaccination.id == vac_id).first()
+def update_vaccination(
+    vac_id: int,
+    data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    vac = (
+        db.query(Vaccination)
+        .join(Animal, Vaccination.animal_id == Animal.id)
+        .filter(Vaccination.id == vac_id, Animal.farm_id == current_user.farm_id)
+        .first()
+    )
     if not vac:
         raise HTTPException(status_code=404, detail="Вакцинация не найдена")
 
@@ -415,8 +733,18 @@ def update_vaccination(vac_id: int, data: dict, db: Session = Depends(get_db)):
 
 
 @app.post("/api/vaccinations/{vac_id}/complete", response_model=VaccinationResponse)
-def complete_vaccination(vac_id: int, data: VaccinationComplete, db: Session = Depends(get_db)):
-    vac = db.query(Vaccination).filter(Vaccination.id == vac_id).first()
+def complete_vaccination(
+    vac_id: int,
+    data: VaccinationComplete,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    vac = (
+        db.query(Vaccination)
+        .join(Animal, Vaccination.animal_id == Animal.id)
+        .filter(Vaccination.id == vac_id, Animal.farm_id == current_user.farm_id)
+        .first()
+    )
     if not vac:
         raise HTTPException(status_code=404, detail="Вакцинация не найдена")
 
@@ -442,8 +770,17 @@ def complete_vaccination(vac_id: int, data: VaccinationComplete, db: Session = D
 
 
 @app.delete("/api/vaccinations/{vac_id}", status_code=204)
-def delete_vaccination(vac_id: int, db: Session = Depends(get_db)):
-    vac = db.query(Vaccination).filter(Vaccination.id == vac_id).first()
+def delete_vaccination(
+    vac_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    vac = (
+        db.query(Vaccination)
+        .join(Animal, Vaccination.animal_id == Animal.id)
+        .filter(Vaccination.id == vac_id, Animal.farm_id == current_user.farm_id)
+        .first()
+    )
     if not vac:
         raise HTTPException(status_code=404, detail="Вакцинация не найдена")
     db.delete(vac)
@@ -451,21 +788,24 @@ def delete_vaccination(vac_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/animals/{animal_id}/schedule")
-def get_animal_schedule(animal_id: int, db: Session = Depends(get_db)):
-    animal = db.query(Animal).filter(Animal.id == animal_id).first()
-    if not animal:
-        raise HTTPException(status_code=404, detail="Животное не найдено")
+def get_animal_schedule(
+    animal_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    animal = get_owned_animal(animal_id, current_user, db)
     if not animal.birth_date:
         raise HTTPException(status_code=400, detail={"message": "Заполните поля", "errors": {"birth_date": "У животного не указана дата рождения"}})
-
     return generate_schedule_for_animal(birth_date=animal.birth_date, sex=animal.sex.value)
 
 
 @app.post("/api/animals/{animal_id}/generate-vaccinations")
-def generate_and_save_vaccinations(animal_id: int, db: Session = Depends(get_db)):
-    animal = db.query(Animal).filter(Animal.id == animal_id).first()
-    if not animal:
-        raise HTTPException(status_code=404, detail="Животное не найдено")
+def generate_and_save_vaccinations(
+    animal_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    animal = get_owned_animal(animal_id, current_user, db)
     if not animal.birth_date:
         raise HTTPException(status_code=400, detail={"message": "Заполните поля", "errors": {"birth_date": "Укажите дату рождения животного"}})
 
@@ -504,22 +844,49 @@ def generate_and_save_vaccinations(animal_id: int, db: Session = Depends(get_db)
 # ==================== EVENTS ====================
 
 @app.get("/api/animals/{animal_id}/events", response_model=list[EventResponse])
-def list_events(animal_id: int, db: Session = Depends(get_db)):
-    return db.query(AnimalEvent).filter(AnimalEvent.animal_id == animal_id).order_by(AnimalEvent.event_date.desc()).all()
+def list_events(
+    animal_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    animal = get_owned_animal(animal_id, current_user, db)
+    return (
+        db.query(AnimalEvent)
+        .filter(AnimalEvent.animal_id == animal.id)
+        .order_by(AnimalEvent.event_date.desc())
+        .all()
+    )
 
 
 @app.get("/api/events", response_model=list[EventResponse])
-def list_all_events(db: Session = Depends(get_db)):
-    return db.query(AnimalEvent).order_by(AnimalEvent.event_date.desc()).limit(100).all()
+def list_all_events(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(AnimalEvent)
+        .join(Animal, AnimalEvent.animal_id == Animal.id)
+        .filter(Animal.farm_id == current_user.farm_id)
+        .order_by(AnimalEvent.event_date.desc())
+        .limit(100)
+        .all()
+    )
 
 
 @app.post("/api/events", response_model=EventResponse, status_code=201)
-def create_event(data: EventCreate, db: Session = Depends(get_db)):
-    animal = db.query(Animal).filter(Animal.id == data.animal_id).first()
+def create_event(
+    data: EventCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    animal = (
+        db.query(Animal)
+        .filter(Animal.id == data.animal_id, Animal.farm_id == current_user.farm_id)
+        .first()
+    )
     if not animal:
         raise HTTPException(status_code=404, detail={"message": "Ошибка", "errors": {"animal_id": "Животное не найдено"}})
 
-    # Запрет событий для выбывших животных
     if animal.status != AnimalStatus.ACTIVE:
         status_label = {
             "sold": "продан",
@@ -559,8 +926,17 @@ def create_event(data: EventCreate, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/events/{event_id}", status_code=204)
-def delete_event(event_id: int, db: Session = Depends(get_db)):
-    event = db.query(AnimalEvent).filter(AnimalEvent.id == event_id).first()
+def delete_event(
+    event_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    event = (
+        db.query(AnimalEvent)
+        .join(Animal, AnimalEvent.animal_id == Animal.id)
+        .filter(AnimalEvent.id == event_id, Animal.farm_id == current_user.farm_id)
+        .first()
+    )
     if not event:
         raise HTTPException(status_code=404, detail="Событие не найдено")
     db.delete(event)
@@ -570,9 +946,20 @@ def delete_event(event_id: int, db: Session = Depends(get_db)):
 # ==================== EXPORT ====================
 
 @app.get("/api/export/animals.csv")
-def export_animals_csv(db: Session = Depends(get_db)):
-    animals = db.query(Animal).order_by(Animal.tag_number).all()
-    groups_map = {g.id: g.name for g in db.query(Group).all()}
+def export_animals_csv(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    animals = (
+        db.query(Animal)
+        .filter(Animal.farm_id == current_user.farm_id)
+        .order_by(Animal.tag_number)
+        .all()
+    )
+    groups_map = {
+        g.id: g.name
+        for g in db.query(Group).filter(Group.farm_id == current_user.farm_id).all()
+    }
 
     output = io.StringIO()
     output.write('\ufeff')
@@ -598,13 +985,23 @@ def export_animals_csv(db: Session = Depends(get_db)):
 
 
 @app.get("/api/export/vaccinations.csv")
-def export_vaccinations_csv(is_done: Optional[bool] = None, db: Session = Depends(get_db)):
-    q = db.query(Vaccination)
+def export_vaccinations_csv(
+    is_done: Optional[bool] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    q = (
+        db.query(Vaccination)
+        .join(Animal, Vaccination.animal_id == Animal.id)
+        .filter(Animal.farm_id == current_user.farm_id)
+    )
     if is_done is not None:
         q = q.filter(Vaccination.is_done == is_done)
     v_list = q.order_by(Vaccination.planned_date).all()
 
-    animals_map = {a.id: a for a in db.query(Animal).all()}
+    animals_map = {
+        a.id: a for a in db.query(Animal).filter(Animal.farm_id == current_user.farm_id).all()
+    }
     vaccines_map = {v.id: v for v in db.query(Vaccine).all()}
 
     output = io.StringIO()
@@ -634,12 +1031,22 @@ def export_vaccinations_csv(is_done: Optional[bool] = None, db: Session = Depend
 # ==================== ГУРТОВАЯ ВАКЦИНАЦИЯ ====================
 
 @app.get("/api/groups/{group_id}/upcoming-vaccinations")
-def group_upcoming_vaccinations(group_id: int, db: Session = Depends(get_db)):
-    group = db.query(Group).filter(Group.id == group_id).first()
-    if not group:
-        raise HTTPException(status_code=404, detail="Группа не найдена")
+def group_upcoming_vaccinations(
+    group_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    group = get_owned_group(group_id, current_user, db)
 
-    animals = db.query(Animal).filter(Animal.group_id == group_id, Animal.status == AnimalStatus.ACTIVE).all()
+    animals = (
+        db.query(Animal)
+        .filter(
+            Animal.group_id == group_id,
+            Animal.status == AnimalStatus.ACTIVE,
+            Animal.farm_id == current_user.farm_id,
+        )
+        .all()
+    )
     animal_ids = [a.id for a in animals]
     if not animal_ids:
         return []
@@ -678,15 +1085,26 @@ def group_upcoming_vaccinations(group_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/groups/{group_id}/complete-vaccinations")
-def group_complete_vaccinations(group_id: int, data: GroupCompleteRequest, db: Session = Depends(get_db)):
-    group = db.query(Group).filter(Group.id == group_id).first()
-    if not group:
-        raise HTTPException(status_code=404, detail="Группа не найдена")
+def group_complete_vaccinations(
+    group_id: int,
+    data: GroupCompleteRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    group = get_owned_group(group_id, current_user, db)
 
     if data.actual_date > date.today():
         raise HTTPException(status_code=400, detail={"message": "Проверьте поля", "errors": {"actual_date": "Дата не может быть в будущем"}})
 
-    animals = db.query(Animal).filter(Animal.group_id == group_id, Animal.status == AnimalStatus.ACTIVE).all()
+    animals = (
+        db.query(Animal)
+        .filter(
+            Animal.group_id == group_id,
+            Animal.status == AnimalStatus.ACTIVE,
+            Animal.farm_id == current_user.farm_id,
+        )
+        .all()
+    )
     animal_ids = [a.id for a in animals]
 
     if not animal_ids:
@@ -715,28 +1133,50 @@ def group_complete_vaccinations(group_id: int, data: GroupCompleteRequest, db: S
 # ==================== СОСТАВ ГУРТА ====================
 
 @app.get("/api/groups/{group_id}/animals", response_model=list[AnimalResponse])
-def get_group_animals(group_id: int, db: Session = Depends(get_db)):
-    group = db.query(Group).filter(Group.id == group_id).first()
-    if not group:
-        raise HTTPException(status_code=404, detail="Группа не найдена")
-    return db.query(Animal).filter(Animal.group_id == group_id, Animal.status == AnimalStatus.ACTIVE).order_by(Animal.tag_number).all()
+def get_group_animals(
+    group_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    group = get_owned_group(group_id, current_user, db)
+    return (
+        db.query(Animal)
+        .filter(Animal.group_id == group.id, Animal.status == AnimalStatus.ACTIVE, Animal.farm_id == current_user.farm_id)
+        .order_by(Animal.tag_number)
+        .all()
+    )
 
 
 @app.get("/api/animals-without-group", response_model=list[AnimalResponse])
-def animals_without_group(db: Session = Depends(get_db)):
-    return db.query(Animal).filter(Animal.status == AnimalStatus.ACTIVE).order_by(Animal.tag_number).all()
+def animals_without_group(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(Animal)
+        .filter(Animal.status == AnimalStatus.ACTIVE, Animal.farm_id == current_user.farm_id)
+        .order_by(Animal.tag_number)
+        .all()
+    )
 
 
 @app.post("/api/groups/{group_id}/assign")
-def assign_animals_to_group(group_id: int, data: GroupAssignRequest, db: Session = Depends(get_db)):
-    group = db.query(Group).filter(Group.id == group_id).first()
-    if not group:
-        raise HTTPException(status_code=404, detail="Группа не найдена")
+def assign_animals_to_group(
+    group_id: int,
+    data: GroupAssignRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    group = get_owned_group(group_id, current_user, db)
 
     if data.action not in ("add", "remove"):
         raise HTTPException(status_code=400, detail={"message": "Ошибка", "errors": {"action": "Должно быть 'add' или 'remove'"}})
 
-    animals = db.query(Animal).filter(Animal.id.in_(data.animal_ids)).all()
+    animals = (
+        db.query(Animal)
+        .filter(Animal.id.in_(data.animal_ids), Animal.farm_id == current_user.farm_id)
+        .all()
+    )
 
     if not animals:
         raise HTTPException(status_code=400, detail={"message": "Ошибка", "errors": {"animal_ids": "Животные не найдены"}})
@@ -753,10 +1193,16 @@ def assign_animals_to_group(group_id: int, data: GroupAssignRequest, db: Session
                 changed += 1
 
     db.commit()
-    return {"action": data.action, "changed": changed, "total_in_group": db.query(Animal).filter(Animal.group_id == group_id, Animal.status == AnimalStatus.ACTIVE).count()}
+    return {
+        "action": data.action,
+        "changed": changed,
+        "total_in_group": db.query(Animal)
+        .filter(Animal.group_id == group_id, Animal.status == AnimalStatus.ACTIVE)
+        .count(),
+    }
 
 
-# ==================== ФИНАНСЫ: РАСХОДЫ ====================
+# ==================== EXPENSES ====================
 
 @app.get("/api/expenses", response_model=list[ExpenseResponse])
 def list_expenses(
@@ -764,9 +1210,10 @@ def list_expenses(
     date_to: Optional[date] = None,
     category: Optional[str] = None,
     group_id: Optional[int] = None,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Expense)
+    q = db.query(Expense).filter(Expense.farm_id == current_user.farm_id)
     if date_from:
         q = q.filter(Expense.expense_date >= date_from)
     if date_to:
@@ -779,7 +1226,11 @@ def list_expenses(
 
 
 @app.post("/api/expenses", response_model=ExpenseResponse, status_code=201)
-def create_expense(data: ExpenseCreate, db: Session = Depends(get_db)):
+def create_expense(
+    data: ExpenseCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     errors = {}
 
     if data.category not in [c.value for c in ExpenseCategory]:
@@ -791,7 +1242,11 @@ def create_expense(data: ExpenseCreate, db: Session = Depends(get_db)):
     if data.expense_date > date.today():
         errors["expense_date"] = "Дата не может быть в будущем"
     if data.group_id:
-        group = db.query(Group).filter(Group.id == data.group_id).first()
+        group = (
+            db.query(Group)
+            .filter(Group.id == data.group_id, Group.farm_id == current_user.farm_id)
+            .first()
+        )
         if not group:
             errors["group_id"] = f"Группа #{data.group_id} не найдена"
 
@@ -799,6 +1254,7 @@ def create_expense(data: ExpenseCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail={"message": "Проверьте поля формы", "errors": errors})
 
     exp = Expense(
+        farm_id=current_user.farm_id,
         category=ExpenseCategory(data.category),
         amount=data.amount,
         expense_date=data.expense_date,
@@ -814,24 +1270,33 @@ def create_expense(data: ExpenseCreate, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/expenses/{expense_id}", status_code=204)
-def delete_expense(expense_id: int, db: Session = Depends(get_db)):
-    exp = db.query(Expense).filter(Expense.id == expense_id).first()
+def delete_expense(
+    expense_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    exp = (
+        db.query(Expense)
+        .filter(Expense.id == expense_id, Expense.farm_id == current_user.farm_id)
+        .first()
+    )
     if not exp:
         raise HTTPException(status_code=404, detail="Расход не найден")
     db.delete(exp)
     db.commit()
 
 
-# ==================== ФИНАНСЫ: ДОХОДЫ ====================
+# ==================== INCOMES ====================
 
 @app.get("/api/incomes", response_model=list[IncomeResponse])
 def list_incomes(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     category: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Income)
+    q = db.query(Income).filter(Income.farm_id == current_user.farm_id)
     if date_from:
         q = q.filter(Income.income_date >= date_from)
     if date_to:
@@ -842,7 +1307,11 @@ def list_incomes(
 
 
 @app.post("/api/incomes", response_model=IncomeResponse, status_code=201)
-def create_income(data: IncomeCreate, db: Session = Depends(get_db)):
+def create_income(
+    data: IncomeCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     errors = {}
 
     if data.category not in [c.value for c in IncomeCategory]:
@@ -858,34 +1327,37 @@ def create_income(data: IncomeCreate, db: Session = Depends(get_db)):
 
     animal = None
     if data.animal_id:
-        animal = db.query(Animal).filter(Animal.id == data.animal_id).first()
+        animal = (
+            db.query(Animal)
+            .filter(Animal.id == data.animal_id, Animal.farm_id == current_user.farm_id)
+            .first()
+        )
         if not animal:
             errors["animal_id"] = f"Животное #{data.animal_id} не найдено"
-        else:
-            if animal.status.value in ("sold", "slaughtered"):
-                errors["animal_id"] = f"Животное {animal.tag_number} уже {('продано' if animal.status.value == 'sold' else 'забито')}"
+        elif animal.status.value in ("sold", "slaughtered"):
+            errors["animal_id"] = f"Животное {animal.tag_number} уже {('продано' if animal.status.value == 'sold' else 'забито')}"
 
     if errors:
         raise HTTPException(status_code=400, detail={"message": "Проверьте поля формы", "errors": errors})
 
-    auto_status_changed = None
     if animal and data.category in ("livestock", "meat"):
         if data.category == "livestock":
             animal.status = AnimalStatus.SOLD
-            auto_status_changed = "sold"
-        elif data.category == "meat":
+            auto_status = "sold"
+        else:
             animal.status = AnimalStatus.SLAUGHTERED
-            auto_status_changed = "slaughtered"
+            auto_status = "slaughtered"
 
         event = AnimalEvent(
             animal_id=animal.id,
-            event_type=auto_status_changed,
+            event_type=auto_status,
             event_date=data.income_date,
             description=(data.description or f"Продажа ({data.category})") + f" — {data.amount:.0f} ₽",
         )
         db.add(event)
 
     inc = Income(
+        farm_id=current_user.farm_id,
         category=IncomeCategory(data.category),
         amount=data.amount,
         income_date=data.income_date,
@@ -900,24 +1372,33 @@ def create_income(data: IncomeCreate, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/incomes/{income_id}", status_code=204)
-def delete_income(income_id: int, db: Session = Depends(get_db)):
-    inc = db.query(Income).filter(Income.id == income_id).first()
+def delete_income(
+    income_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    inc = (
+        db.query(Income)
+        .filter(Income.id == income_id, Income.farm_id == current_user.farm_id)
+        .first()
+    )
     if not inc:
         raise HTTPException(status_code=404, detail="Доход не найден")
     db.delete(inc)
     db.commit()
 
 
-# ==================== ФИНАНСЫ: СВОДКА ====================
+# ==================== FINANCE SUMMARY ====================
 
 @app.get("/api/finance/summary")
 def finance_summary(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    eq = db.query(Expense)
-    iq = db.query(Income)
+    eq = db.query(Expense).filter(Expense.farm_id == current_user.farm_id)
+    iq = db.query(Income).filter(Income.farm_id == current_user.farm_id)
     if date_from:
         eq = eq.filter(Expense.expense_date >= date_from)
         iq = iq.filter(Income.income_date >= date_from)
@@ -957,7 +1438,11 @@ def finance_summary(
         avg_price_per_kg = round(meat_income / meat_weight, 2)
         cost_per_kg = round(total_expense / meat_weight, 2)
 
-    active_count = db.query(Animal).filter(Animal.status == AnimalStatus.ACTIVE).count()
+    active_count = (
+        db.query(Animal)
+        .filter(Animal.status == AnimalStatus.ACTIVE, Animal.farm_id == current_user.farm_id)
+        .count()
+    )
     profit_per_animal = round(profit / active_count, 2) if active_count > 0 else None
 
     return {
@@ -986,8 +1471,15 @@ def finance_summary(
 # ==================== DASHBOARD ====================
 
 @app.get("/api/dashboard")
-def dashboard(db: Session = Depends(get_db)):
-    total = db.query(Animal).filter(Animal.status == AnimalStatus.ACTIVE).count()
+def dashboard(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    total = (
+        db.query(Animal)
+        .filter(Animal.status == AnimalStatus.ACTIVE, Animal.farm_id == current_user.farm_id)
+        .count()
+    )
     today = date.today()
     week_later = today + timedelta(days=7)
 
@@ -995,6 +1487,7 @@ def dashboard(db: Session = Depends(get_db)):
         db.query(Vaccination)
         .join(Animal, Vaccination.animal_id == Animal.id)
         .filter(
+            Animal.farm_id == current_user.farm_id,
             Animal.status == AnimalStatus.ACTIVE,
             Vaccination.is_done == False,
             Vaccination.planned_date >= today,
@@ -1007,6 +1500,7 @@ def dashboard(db: Session = Depends(get_db)):
         db.query(Vaccination)
         .join(Animal, Vaccination.animal_id == Animal.id)
         .filter(
+            Animal.farm_id == current_user.farm_id,
             Animal.status == AnimalStatus.ACTIVE,
             Vaccination.is_done == False,
             Vaccination.planned_date < today,
@@ -1018,18 +1512,21 @@ def dashboard(db: Session = Depends(get_db)):
 
 
 @app.get("/api/dashboard/full")
-def dashboard_full(db: Session = Depends(get_db)):
-    """Расширенная сводка: поголовье, вакцинация, финансы, события."""
+def dashboard_full(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     today = date.today()
     week_later = today + timedelta(days=7)
     month_ago = today - timedelta(days=30)
     year_ago = today - timedelta(days=365)
+    farm_id = current_user.farm_id
 
-    # Вакцинация (только активные)
     upcoming_7 = (
         db.query(Vaccination)
         .join(Animal, Vaccination.animal_id == Animal.id)
         .filter(
+            Animal.farm_id == farm_id,
             Animal.status == AnimalStatus.ACTIVE,
             Vaccination.is_done == False,
             Vaccination.planned_date >= today,
@@ -1041,6 +1538,7 @@ def dashboard_full(db: Session = Depends(get_db)):
         db.query(Vaccination)
         .join(Animal, Vaccination.animal_id == Animal.id)
         .filter(
+            Animal.farm_id == farm_id,
             Animal.status == AnimalStatus.ACTIVE,
             Vaccination.is_done == False,
             Vaccination.planned_date < today,
@@ -1048,8 +1546,7 @@ def dashboard_full(db: Session = Depends(get_db)):
         .count()
     )
 
-    # Поголовье
-    active_q = db.query(Animal).filter(Animal.status == AnimalStatus.ACTIVE)
+    active_q = db.query(Animal).filter(Animal.status == AnimalStatus.ACTIVE, Animal.farm_id == farm_id)
     total_active = active_q.count()
     cows = active_q.filter(Animal.sex == Sex.FEMALE).count()
     bulls = active_q.filter(Animal.sex == Sex.MALE).count()
@@ -1057,19 +1554,18 @@ def dashboard_full(db: Session = Depends(get_db)):
         Animal.birth_date.isnot(None),
         Animal.birth_date >= year_ago,
     ).count()
-    groups_count = db.query(Group).count()
+    groups_count = db.query(Group).filter(Group.farm_id == farm_id).count()
 
-    # Финансы за 30 дней
-    incomes_30 = db.query(Income).filter(Income.income_date >= month_ago).all()
-    expenses_30 = db.query(Expense).filter(Expense.expense_date >= month_ago).all()
+    incomes_30 = db.query(Income).filter(Income.farm_id == farm_id, Income.income_date >= month_ago).all()
+    expenses_30 = db.query(Expense).filter(Expense.farm_id == farm_id, Expense.expense_date >= month_ago).all()
     income_30 = sum(i.amount for i in incomes_30)
     expense_30 = sum(e.amount for e in expenses_30)
     profit_30 = income_30 - expense_30
 
-    # События за 30 дней
     events_30 = (
         db.query(AnimalEvent)
-        .filter(AnimalEvent.event_date >= month_ago)
+        .join(Animal, AnimalEvent.animal_id == Animal.id)
+        .filter(Animal.farm_id == farm_id, AnimalEvent.event_date >= month_ago)
         .count()
     )
 

@@ -26,31 +26,83 @@ class Sex(str, enum.Enum):
 
 
 class ExpenseCategory(str, enum.Enum):
-    FEED = "feed"              # Корм (сено, комбикорм, силос)
-    SALARY = "salary"          # Зарплата
-    VET = "vet"                # Ветеринария
-    FUEL = "fuel"              # Бензин / ГСМ
-    UTILITIES = "utilities"    # Содержание (электричество, вода)
-    EQUIPMENT = "equipment"    # Оборудование, инвентарь
-    TAXES = "taxes"            # Налоги, взносы
-    OTHER = "other"            # Прочее
+    FEED = "feed"
+    SALARY = "salary"
+    VET = "vet"
+    FUEL = "fuel"
+    UTILITIES = "utilities"
+    EQUIPMENT = "equipment"
+    TAXES = "taxes"
+    OTHER = "other"
 
 
 class IncomeCategory(str, enum.Enum):
-    MEAT = "meat"              # Продажа мяса
-    LIVESTOCK = "livestock"    # Продажа скота
-    MILK = "milk"              # Продажа молока
-    BYPRODUCTS = "byproducts"  # Субпродукты, шкуры
-    SUBSIDY = "subsidy"        # Субсидии
-    OTHER = "other"            # Прочее
+    MEAT = "meat"
+    LIVESTOCK = "livestock"
+    MILK = "milk"
+    BYPRODUCTS = "byproducts"
+    SUBSIDY = "subsidy"
+    OTHER = "other"
 
+
+class UserRole(str, enum.Enum):
+    OWNER = "owner"
+    VET = "vet"
+    ZOOTECHNIK = "zootechnik"
+    WORKER = "worker"
+
+
+# ==================== ХОЗЯЙСТВО ====================
+
+class Farm(Base):
+    __tablename__ = "farms"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    region = Column(String, nullable=True)
+    district = Column(String, nullable=True)
+    inn = Column(String, nullable=True)
+    invite_code = Column(String, unique=True, index=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.now)
+
+    users = relationship("User", back_populates="farm")
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    password_hash = Column(String, nullable=False)
+
+    full_name = Column(String, nullable=False)
+    nickname = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    birth_date = Column(Date, nullable=True)
+    avatar_url = Column(String, nullable=True)
+
+    role = Column(SQLEnum(UserRole), default=UserRole.OWNER, nullable=False)
+    farm_id = Column(Integer, ForeignKey("farms.id"), nullable=False)
+
+    settings = Column(Text, nullable=True)
+
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now)
+    last_login_at = Column(DateTime, nullable=True)
+
+    farm = relationship("Farm", back_populates="users")
+
+
+# ==================== ЖИВОТНЫЕ ====================
 
 class Animal(Base):
     __tablename__ = "animals"
 
     id = Column(Integer, primary_key=True, index=True)
-    tag_number = Column(String, unique=True, index=True, nullable=False)
-    chip_number = Column(String, unique=True, nullable=True)
+    farm_id = Column(Integer, ForeignKey("farms.id"), nullable=True, index=True)
+
+    tag_number = Column(String, index=True, nullable=False)
+    chip_number = Column(String, nullable=True)
     name = Column(String, nullable=True)
     sex = Column(SQLEnum(Sex), nullable=False)
     birth_date = Column(Date, nullable=True)
@@ -76,6 +128,7 @@ class Group(Base):
     __tablename__ = "groups"
 
     id = Column(Integer, primary_key=True)
+    farm_id = Column(Integer, ForeignKey("farms.id"), nullable=True, index=True)
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
@@ -131,11 +184,12 @@ class Expense(Base):
     __tablename__ = "expenses"
 
     id = Column(Integer, primary_key=True)
+    farm_id = Column(Integer, ForeignKey("farms.id"), nullable=True, index=True)
     category = Column(SQLEnum(ExpenseCategory), nullable=False)
-    amount = Column(Float, nullable=False)         # сумма в рублях
+    amount = Column(Float, nullable=False)
     expense_date = Column(Date, nullable=False)
     description = Column(String, nullable=True)
-    quantity = Column(String, nullable=True)       # например, "5 тонн"
+    quantity = Column(String, nullable=True)
     group_id = Column(Integer, ForeignKey("groups.id"), nullable=True)
     animal_id = Column(Integer, ForeignKey("animals.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
@@ -145,11 +199,12 @@ class Income(Base):
     __tablename__ = "incomes"
 
     id = Column(Integer, primary_key=True)
+    farm_id = Column(Integer, ForeignKey("farms.id"), nullable=True, index=True)
     category = Column(SQLEnum(IncomeCategory), nullable=False)
     amount = Column(Float, nullable=False)
     income_date = Column(Date, nullable=False)
     description = Column(String, nullable=True)
-    weight_kg = Column(Float, nullable=True)       # вес (для продажи мяса)
+    weight_kg = Column(Float, nullable=True)
     animal_id = Column(Integer, ForeignKey("animals.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
 
