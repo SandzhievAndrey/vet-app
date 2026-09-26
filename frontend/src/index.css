@@ -1,1 +1,111 @@
-/* Reset — все основные стили в App.css */
+@import '@fontsource-variable/inter';
+
+/* ============================================
+   ДИЗАЙН-ТОКЕНЫ — Calm Minimalism
+   Тёплые нейтральные + индиго-акцент + Inter
+   ============================================ */
+:root {
+  /* Отступы */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+
+  /* Радиусы */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+
+  /* Шрифты */
+  --font: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --fs-xs: 11px;
+  --fs-sm: 13px;
+  --fs-md: 15px;
+  --fs-lg: 17px;
+  --fs-xl: 20px;
+  --fs-2xl: 24px;
+  --fs-3xl: 32px;
+
+  /* Веса */
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  /* Тени — мягкие, тёплые */
+  --shadow-card: 0 1px 2px rgba(28, 25, 23, 0.04), 0 1px 4px rgba(28, 25, 23, 0.03);
+  --shadow-card-hover: 0 2px 6px rgba(28, 25, 23, 0.06), 0 8px 24px rgba(28, 25, 23, 0.07);
+  --shadow-modal: 0 12px 40px rgba(28, 25, 23, 0.18);
+
+  /* Цвета — светлая тема (тёплая) */
+  --bg: #fafaf9;
+  --card: #ffffff;
+  --sidebar-bg: #f5f5f4;
+  --text: #1c1917;
+  --text-secondary: #57534e;
+  --text-tertiary: #a8a29e;
+  --separator: #e7e5e4;
+  --separator-soft: #f5f5f4;
+
+  /* Акцент — индиго (вместо ярко-синего) */
+  --blue: #4f46e5;
+  --blue-hover: #4338ca;
+  --blue-soft: rgba(79, 70, 229, 0.10);
+
+  /* Семантика — приглушённая */
+  --green: #10b981;
+  --green-soft: rgba(16, 185, 129, 0.10);
+  --orange: #f59e0b;
+  --orange-soft: rgba(245, 158, 11, 0.12);
+  --red: #ef4444;
+  --red-soft: rgba(239, 68, 68, 0.10);
+
+  /* Служебное */
+  --radius: var(--r-md);
+  --shadow: var(--shadow-card);
+  /* === Алиасы под старую дизайн-систему (auth-feature) === */
+  --primary: var(--blue);
+  --primary-hover: var(--blue-hover);
+  --primary-soft: var(--blue-soft);
+  --primary-soft-hover: rgba(79, 70, 229, 0.16);
+  --success: var(--green);
+  --success-soft: var(--green-soft);
+  --warning: var(--orange);
+  --warning-soft: var(--orange-soft);
+  --danger: var(--red);
+  --danger-soft: var(--red-soft);
+  --border: var(--separator);
+  --border-strong: #d6d3d1;
+  --bg-subtle: var(--separator-soft);
+
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0c0a09;
+    --card: #1c1917;
+    --sidebar-bg: #141210;
+    --text: #f5f5f4;
+    --text-secondary: #a8a29e;
+    --text-tertiary: #78716c;
+    --separator: #292524;
+    --separator-soft: #1c1917;
+
+    --blue-soft: rgba(79, 70, 229, 0.20);
+    --green-soft: rgba(16, 185, 129, 0.18);
+    --orange-soft: rgba(245, 158, 11, 0.18);
+    --red-soft: rgba(239, 68, 68, 0.18);
+
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 1px 4px rgba(0, 0, 0, 0.3);
+    --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.5), 0 8px 24px rgba(0, 0, 0, 0.4);
+    --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.6);
+    --primary-soft-hover: rgba(79, 70, 229, 0.28);
+    --border-strong: #44403c;
+
+  }
+}
