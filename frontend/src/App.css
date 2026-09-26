@@ -53,15 +53,9 @@ svg { flex-shrink: 0; display: block; }
   color: var(--text);
 }
 .logo-icon {
-  width: 28px;
-  height: 28px;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  background: var(--primary);
-  color: #fff;
-  border-radius: var(--r-md);
-  flex-shrink: 0;
+  color: var(--blue);
 }
 .drawer-close {
   display: none;
@@ -105,12 +99,13 @@ svg { flex-shrink: 0; display: block; }
   font-weight: var(--fw-semibold);
 }
 .drawer-item-icon {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
   flex-shrink: 0;
+  width: 18px;
+  color: currentColor;
+  opacity: 0.7;
 }
 .drawer-item-text {
   flex: 1;

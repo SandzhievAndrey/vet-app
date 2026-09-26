@@ -4,6 +4,7 @@ import { useAuth } from './AuthContext'
 import AuthScreen from './AuthScreen'
 import ProfileTab from './ProfileTab'
 import './App.css'
+import { LayoutDashboard, PawPrint, Users, Syringe, Wallet, Stethoscope } from 'lucide-react';
 
 const API = 'http://localhost:8000/api'
 
@@ -349,7 +350,7 @@ function App() {
       <aside className={`drawer ${drawerOpen ? 'open' : ''}`}>
         <div className="drawer-header">
           <div className="logo">
-            <span className="logo-icon">🐄</span>
+            <span className="logo-icon"><Stethoscope size={22} /></span>
             <span className="logo-text">Моё поголовье</span>
           </div>
           <button className="drawer-close" onClick={() => setDrawerOpen(false)}>
@@ -362,7 +363,7 @@ function App() {
             className={`drawer-item ${tab === 'dashboard' ? 'active' : ''}`}
             onClick={() => goTo('dashboard')}
           >
-            <span className="drawer-item-icon">📊</span>
+            <span className="drawer-item-icon"><LayoutDashboard size={18} /></span>
             <span className="drawer-item-text">Сводка</span>
           </button>
 
@@ -370,7 +371,7 @@ function App() {
             className={`drawer-item ${tab === 'animals' ? 'active' : ''}`}
             onClick={() => goTo('animals')}
           >
-            <span className="drawer-item-icon">🐄</span>
+            <span className="drawer-item-icon"><PawPrint size={18} /></span>
             <span className="drawer-item-text">Поголовье</span>
             <span className="drawer-item-count">{animals.length}</span>
           </button>
@@ -379,7 +380,7 @@ function App() {
             className={`drawer-item ${tab === 'groups' ? 'active' : ''}`}
             onClick={() => goTo('groups')}
           >
-            <span className="drawer-item-icon">👥</span>
+            <span className="drawer-item-icon"><Users size={18} /></span>
             <span className="drawer-item-text">Группы</span>
             <span className="drawer-item-count">{groups.length}</span>
           </button>
@@ -388,7 +389,7 @@ function App() {
             className={`drawer-item ${tab === 'vaccination' ? 'active' : ''}`}
             onClick={() => goTo('vaccination')}
           >
-            <span className="drawer-item-icon">💉</span>
+            <span className="drawer-item-icon"><Syringe size={18} /></span>
             <span className="drawer-item-text">Вакцинация</span>
             {overdueCount > 0 ? (
               <span className="drawer-item-badge">{overdueCount}</span>
@@ -401,7 +402,7 @@ function App() {
             className={`drawer-item ${tab === 'finance' ? 'active' : ''}`}
             onClick={() => goTo('finance')}
           >
-            <span className="drawer-item-icon">💰</span>
+            <span className="drawer-item-icon"><Wallet size={18} /></span>
             <span className="drawer-item-text">Финансы</span>
           </button>
 
